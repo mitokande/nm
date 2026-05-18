@@ -10,6 +10,7 @@ import { GOLDEN_STAGES, GEM_EMOJI, GEM_NAME, GemType, GoldenStage } from "./gold
 import { FREEZE_STAGES } from "./freezeStages";
 import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
+import Constants from "expo-constants";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -249,18 +250,22 @@ let rewardedAd: any = null;
 let RewardedAdEventType: any = null;
 let AdEventType: any = null;
 
-try {
-  const admob = require("react-native-google-mobile-ads");
-  const adUnitId = __DEV__
-    ? admob.TestIds.REWARDED
-    : "ca-app-pub-4604843322018757/2967656297";
-  rewardedAd = admob.RewardedAd.createForAdRequest(adUnitId, {
-    requestNonPersonalizedAdsOnly: true,
-  });
-  RewardedAdEventType = admob.RewardedAdEventType;
-  AdEventType = admob.AdEventType;
-} catch {
-  // Running in Expo Go or native module not linked — ads disabled
+// Expo Go doesn't include native modules — skip the require entirely to avoid crash.
+// In a real build (EAS / expo run:android) the module is available and ads work.
+if (Constants.appOwnership !== "expo") {
+  try {
+    const admob = require("react-native-google-mobile-ads");
+    const adUnitId = __DEV__
+      ? admob.TestIds.REWARDED
+      : "ca-app-pub-4604843322018757/2967656297";
+    rewardedAd = admob.RewardedAd.createForAdRequest(adUnitId, {
+      requestNonPersonalizedAdsOnly: true,
+    });
+    RewardedAdEventType = admob.RewardedAdEventType;
+    AdEventType = admob.AdEventType;
+  } catch {
+    // Native module not linked in this build
+  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
