@@ -98,8 +98,16 @@ If the player runs out of Add Row uses **and** no valid pairs exist, a **No Move
 
 | Button | Count per stage | Effect |
 |---|---|---|
-| **＋ Add Row** | 5 (7 in Freeze Mode) | Appends a copy of all currently active cells as new rows at the bottom of the board, creating fresh adjacency opportunities. |
+| **＋ Add Row** | 5 (7 in Freeze Mode) | Appends a copy of all currently active cells as new rows at the bottom of the board, creating fresh adjacency opportunities. When the count reaches 0, the button switches to a 📺 "AD" state — watching a rewarded AdMob ad grants one free use. |
 | **💡 Hint** | 2 | Highlights a valid pair with a pulsing yellow glow for 2.4 seconds. Frozen cells are excluded from hint candidates. Shows a warning toast if no matches exist. |
+
+### Add Row — Ad Reward Flow
+When `adds === 0` the button shows a 📺 icon with a terracotta "AD" badge and a terracotta border. Pressing it:
+- If a rewarded ad is loaded → plays the ad; on `EARNED_REWARD` callback → row is added for free.
+- If the ad hasn't loaded yet → shows "Ad not ready — try again" toast and triggers a reload.
+- In Expo Go (native module absent) → shows "Ads not available" toast; no crash.
+
+Ad setup: `react-native-google-mobile-ads`, App ID `ca-app-pub-4604843322018757~1702676089`, rewarded unit `ca-app-pub-4604843322018757/2967656297`. Test IDs used in `__DEV__` builds. Module is lazy-required and guarded with `Constants.appOwnership !== "expo"` so Expo Go is unaffected.
 
 ---
 
@@ -195,6 +203,7 @@ Crown data loads on app startup; best scores load each time a stage begins or is
 | Navigation | Manual `screen` state (no navigation library) |
 | Animations | React Native `Animated` API, native driver |
 | Android shadow fix | `renderToHardwareTextureAndroid` on animated views |
+| Ads | `react-native-google-mobile-ads` (rewarded ad for Add Row) |
 
 ## Visual Design
 
@@ -267,6 +276,20 @@ Defined in `screens/tutorialStages.ts` (`TutorialStage` + `TutorialStep` interfa
 
 ---
 
+## App Config (`app.json`)
+
+| Field | Value |
+|---|---|
+| Android package | `com.anonymous.numbermatchrn` |
+| iOS bundle ID | `com.mithatcanturan.numbermatch` |
+| iOS encryption | `ITSAppUsesNonExemptEncryption: false` |
+| EAS project ID | `a211c348-5ff9-4efc-98d8-8f5d4a89f67b` |
+| Plugins | `expo-audio`, `react-native-google-mobile-ads` |
+| Splash background | `#f5efe6` |
+| Adaptive icon background | `#f5efe6` |
+
+---
+
 ## File Structure
 
 ```
@@ -274,7 +297,7 @@ App.tsx                   — Root: splash gate, screen router, crown state, tut
 screens/
   SplashScreen.tsx        — Opening logo animation (spring in, title fade, hold, fade out)
   MainMenu.tsx            — Mode cards; shows stage progress / "Continue" for Endless & Freeze
-  GameScreen.tsx          — All game logic, board rendering, modals, animations, tutorial tap-blocking
+  GameScreen.tsx          — All game logic, board rendering, modals, animations, tutorial tap-blocking, AdMob rewarded ad
   tutorialStages.ts       — Tutorial stage definitions (values, forced-tap steps, tips)
   goldenStages.ts         — Golden Garden stage definitions (values, gem positions, targets)
   freezeStages.ts         — Freeze Mode stage definitions (values, frozenIndices)
