@@ -10,12 +10,6 @@ import { GOLDEN_STAGES, GEM_EMOJI, GEM_NAME, GemType, GoldenStage } from "./gold
 import { FREEZE_STAGES } from "./freezeStages";
 import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
-import {
-  RewardedAd,
-  RewardedAdEventType,
-  AdEventType,
-  TestIds,
-} from "react-native-google-mobile-ads";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -249,14 +243,25 @@ function CountUp({ to, visible, style, duration = 950 }: {
 }
 
 // ─── AdMob ────────────────────────────────────────────────────────────────────
+// Lazy-require so the app doesn't crash in Expo Go (native module absent there).
 
-const REWARDED_AD_UNIT = __DEV__
-  ? TestIds.REWARDED
-  : "ca-app-pub-4604843322018757/2967656297";
+let rewardedAd: any = null;
+let RewardedAdEventType: any = null;
+let AdEventType: any = null;
 
-const rewardedAd = RewardedAd.createForAdRequest(REWARDED_AD_UNIT, {
-  requestNonPersonalizedAdsOnly: true,
-});
+try {
+  const admob = require("react-native-google-mobile-ads");
+  const adUnitId = __DEV__
+    ? admob.TestIds.REWARDED
+    : "ca-app-pub-4604843322018757/2967656297";
+  rewardedAd = admob.RewardedAd.createForAdRequest(adUnitId, {
+    requestNonPersonalizedAdsOnly: true,
+  });
+  RewardedAdEventType = admob.RewardedAdEventType;
+  AdEventType = admob.AdEventType;
+} catch {
+  // Running in Expo Go or native module not linked — ads disabled
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -340,6 +345,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   }, []);
 
   useEffect(() => {
+    if (!rewardedAd) return;
     const unsubLoaded = rewardedAd.addAdEventListener(AdEventType.LOADED, () => setAdLoaded(true));
     const unsubClosed = rewardedAd.addAdEventListener(AdEventType.CLOSED, () => {
       setAdLoaded(false);
@@ -824,6 +830,10 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     if (adds > 0) {
       setAdds((n) => n - 1);
       performAddRow();
+      return;
+    }
+    if (!rewardedAd) {
+      showToast("Ads not available", "warn");
       return;
     }
     if (adLoaded) {
