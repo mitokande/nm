@@ -10,6 +10,12 @@ import { GOLDEN_STAGES, GEM_EMOJI, GEM_NAME, GemType, GoldenStage } from "./gold
 import { FREEZE_STAGES } from "./freezeStages";
 import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
+import {
+  RewardedAd,
+  RewardedAdEventType,
+  AdEventType,
+  TestIds,
+} from "react-native-google-mobile-ads";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -242,6 +248,16 @@ function CountUp({ to, visible, style, duration = 950 }: {
   return <Animated.Text style={[style, { transform: [{ scale: bump }] }]}>{display}</Animated.Text>;
 }
 
+// ─── AdMob ────────────────────────────────────────────────────────────────────
+
+const REWARDED_AD_UNIT = __DEV__
+  ? TestIds.REWARDED
+  : "ca-app-pub-4604843322018757/2967656297";
+
+const rewardedAd = RewardedAd.createForAdRequest(REWARDED_AD_UNIT, {
+  requestNonPersonalizedAdsOnly: true,
+});
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -259,6 +275,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const [score, setScore] = useState(0);
   const [adds, setAdds] = useState(5);
   const [hints, setHints] = useState(2);
+  const [adLoaded, setAdLoaded] = useState(false);
   const [hintPair, setHintPair] = useState<[number, number] | null>(() => {
     if (mode === "tutorial") {
       const t = TUTORIAL_STAGES.find((s) => s.id === initialStage) ?? TUTORIAL_STAGES[0];
@@ -320,6 +337,20 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       if (comboTimerRef.current) clearTimeout(comboTimerRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    const unsubLoaded = rewardedAd.addAdEventListener(AdEventType.LOADED, () => setAdLoaded(true));
+    const unsubClosed = rewardedAd.addAdEventListener(AdEventType.CLOSED, () => {
+      setAdLoaded(false);
+      rewardedAd.load();
+    });
+    const unsubEarned = rewardedAd.addAdEventListener(
+      RewardedAdEventType.EARNED_REWARD,
+      () => performAddRow(),
+    );
+    rewardedAd.load();
+    return () => { unsubLoaded(); unsubClosed(); unsubEarned(); };
   }, []);
 
   useEffect(() => {
@@ -772,17 +803,10 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     }
   }
 
-  function handleAddRow() {
-    if (paused || stageComplete) return;
-    if (adds <= 0) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      playSound("error", 0.5);
-      showToast("No adds left", "warn");
-      return;
-    }
-    const remaining = cells.filter((c) => c.active).map((c) => c.value);
-    if (remaining.length === 0) return;
+  function performAddRow() {
     setCells((curr) => {
+      const remaining = curr.filter((c) => c.active).map((c) => c.value);
+      if (remaining.length === 0) return curr;
       const next = [...curr];
       let nextId = next.length;
       for (const v of remaining) next.push({ id: nextId++, value: v, active: true });
@@ -790,10 +814,25 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     playSound("add_row", 0.7);
-    setAdds((n) => n - 1);
     setHintPair(null);
     setSelected(null);
-    showToast("Row added", "info", 800);
+    showToast("Row added!", "info", 800);
+  }
+
+  function handleAddRow() {
+    if (paused || stageComplete) return;
+    if (adds > 0) {
+      setAdds((n) => n - 1);
+      performAddRow();
+      return;
+    }
+    if (adLoaded) {
+      rewardedAd.show();
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      showToast("Ad not ready — try again", "warn");
+      rewardedAd.load();
+    }
   }
 
   function handleHint() {
@@ -1131,13 +1170,19 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       {mode !== "tutorial" && <View style={gs.actions}>
         {mode !== "timeattack" && (
           <TouchableOpacity
-            style={[gs.actionBtn, (paused || stageComplete) && gs.actionBtnDisabled]}
+            style={[
+              gs.actionBtn,
+              (paused || stageComplete) && gs.actionBtnDisabled,
+              adds === 0 && gs.actionBtnAd,
+            ]}
             onPress={handleAddRow}
             disabled={paused || stageComplete}
             activeOpacity={0.8}
           >
-            <Text style={gs.actionBtnIcon}>＋</Text>
-            <View style={gs.badge}><Text style={gs.badgeText}>{adds}</Text></View>
+            <Text style={gs.actionBtnIcon}>{adds === 0 ? "📺" : "＋"}</Text>
+            <View style={[gs.badge, adds === 0 && gs.badgeAd]}>
+              <Text style={gs.badgeText}>{adds === 0 ? "AD" : adds}</Text>
+            </View>
           </TouchableOpacity>
         )}
         <TouchableOpacity
@@ -1606,6 +1651,7 @@ const gs = StyleSheet.create({
     shadowOpacity: 0.10, shadowRadius: 8, elevation: 4,
   },
   actionBtnDisabled: { opacity: 0.4 },
+  actionBtnAd: { borderColor: C.primary, borderWidth: 1.5 },
   actionBtnIcon: { fontSize: 24, color: C.ink },
   badge: {
     position: "absolute", top: -4, right: -4,
@@ -1613,6 +1659,7 @@ const gs = StyleSheet.create({
     backgroundColor: C.danger, alignItems: "center", justifyContent: "center",
     borderWidth: 2, borderColor: "#fff", paddingHorizontal: 4,
   },
+  badgeAd: { backgroundColor: C.primary },
   badgeText: { color: "#fff", fontSize: 11, fontWeight: "900" },
 
   howto: {
