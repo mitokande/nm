@@ -1,0 +1,84 @@
+import React, { useState, useEffect, useRef } from "react";
+import { Animated } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import MainMenu from "./screens/MainMenu";
+import GameScreen from "./screens/GameScreen";
+
+type Screen = "menu" | "game";
+export type GameMode = "endless" | "golden" | "timeattack" | "freeze" | "tutorial";
+
+export default function App() {
+  const [screen, setScreen] = useState<Screen>("menu");
+  const [currentStage, setCurrentStage] = useState(1);
+  const [mode, setMode] = useState<GameMode>("endless");
+  const [crowns, setCrowns] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [needsTutorial, setNeedsTutorial] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Promise.all([
+      AsyncStorage.getItem("crowns"),
+      AsyncStorage.getItem("onboarding_done"),
+    ]).then(([crownVal, onboardingDone]) => {
+      if (crownVal !== null) setCrowns(parseInt(crownVal, 10));
+      if (onboardingDone !== "1") {
+        setNeedsTutorial(true);
+        setMode("tutorial");
+        setScreen("game");
+      }
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (loaded) AsyncStorage.setItem("crowns", String(crowns));
+  }, [crowns, loaded]);
+
+  function navigateTo(newScreen: Screen, stage = 1, m: GameMode = "endless") {
+    // Intercept any game navigation if tutorial hasn't been completed yet
+    const effectiveMode = (newScreen === "game" && needsTutorial && m !== "tutorial") ? "tutorial" : m;
+    const effectiveStage = effectiveMode === "tutorial" ? 1 : stage;
+    Animated.timing(fadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
+      setCurrentStage(effectiveStage);
+      setMode(effectiveMode);
+      setScreen(newScreen);
+      Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+    });
+  }
+
+  function handleTutorialComplete() {
+    setNeedsTutorial(false);
+    AsyncStorage.setItem("onboarding_done", "1");
+    navigateTo("menu");
+  }
+
+  function handleResetTutorial() {
+    AsyncStorage.removeItem("onboarding_done");
+    setNeedsTutorial(true);
+    navigateTo("game", 1, "tutorial");
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+      {screen === "game" ? (
+        <GameScreen
+          initialStage={currentStage}
+          mode={mode}
+          crowns={crowns}
+          onCrownsEarned={(amount) => setCrowns((c) => c + amount)}
+          onBack={() => navigateTo("menu")}
+          onTutorialComplete={handleTutorialComplete}
+        />
+      ) : (
+        <MainMenu
+          crowns={crowns}
+          onPlay={(stage, m) => navigateTo("game", stage, m)}
+          onResetTutorial={handleResetTutorial}
+        />
+      )}
+    </Animated.View>
+  );
+}
