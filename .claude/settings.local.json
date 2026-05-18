@@ -1,0 +1,33 @@
+{
+  "model": "claude-opus-4-7",
+  "permissions": {
+    "allow": [
+      "Bash(npx expo *)",
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(npx --yes expo install expo-audio)",
+      "PowerShell(npx --yes expo install expo-audio 2>&1)",
+      "PowerShell(Get-Command node, npm -ErrorAction SilentlyContinue | Select Name,Source; Write-Output \"---\"; Test-Path \"$env:APPDATA\\\\npm\\\\npx.cmd\")",
+      "PowerShell($env:Path = \"C:\\\\Program Files\\\\nodejs;\" + $env:Path; node --version; npm --version)",
+      "Bash(mkdir -p /var/www/vhosts/mithatck.com/httpdocs/nm-editor)",
+      "Bash(chown mithatck:psacln /var/www/vhosts/mithatck.com/flutterapps/nmnew/nm/screens/freezeStages.ts /var/www/vhosts/mithatck.com/flutterapps/nmnew/nm/screens/GameScreen.tsx)",
+      "Bash(chown mithatck:psacln /var/www/vhosts/mithatck.com/httpdocs/nm-editor/index.php)",
+      "Bash(chmod 644 /var/www/vhosts/mithatck.com/httpdocs/nm-editor/index.php)",
+      "Bash(php -l /var/www/vhosts/mithatck.com/httpdocs/nm-editor/index.php)",
+      "Bash(curl -s --max-time 10 http://mithatck.com/nm-editor/)",
+      "Bash(curl -sL --max-time 10 https://mithatck.com/nm-editor/)",
+      "Bash(curl -sL https://mithatck.com/nm-editor/)",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(gunzip -c \"/root/.claude/projects/-var-www-vhosts-mithatck-com-flutterapps-nmnew-nm/dbbe4cc8-a686-4fcd-aff2-ee54eaa338f5/tool-results/webfetch-1778974551288-fbrcde.bin\")",
+      "Bash(mkdir -p /tmp/nm-design)",
+      "Bash(tar -xzf \"/root/.claude/projects/-var-www-vhosts-mithatck-com-flutterapps-nmnew-nm/dbbe4cc8-a686-4fcd-aff2-ee54eaa338f5/tool-results/webfetch-1778974551288-fbrcde.bin\" -C /tmp/nm-design)",
+      "Read(//tmp/**)",
+      "Bash(identify /var/www/vhosts/mithatck.com/flutterapps/nmnew/nm/assets/logo.png)",
+      "Bash(node -e \"require\\('sharp'\\)\")",
+      "Bash(node -e \"require\\('jimp'\\)\")",
+      "Bash(python3 -c \"from PIL import Image; print\\('PIL available'\\)\")",
+      "Bash(pip3 install *)",
+      "Bash(git *)"
+    ]
+  }
+}

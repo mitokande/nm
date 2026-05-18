@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.mithatcanturan.numbermatch",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "GADDelayAppMeasurementInit": true
       }
     },
     "android": {

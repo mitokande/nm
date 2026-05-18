@@ -243,31 +243,6 @@ function CountUp({ to, visible, style, duration = 950 }: {
   return <Animated.Text style={[style, { transform: [{ scale: bump }] }]}>{display}</Animated.Text>;
 }
 
-// ─── AdMob ────────────────────────────────────────────────────────────────────
-// Lazy-require so the app doesn't crash in Expo Go (native module absent there).
-
-let rewardedAd: any = null;
-let RewardedAdEventType: any = null;
-let AdEventType: any = null;
-
-// Expo Go doesn't include native modules — skip the require entirely to avoid crash.
-// In a real build (EAS / expo run:android) the module is available and ads work.
-if (Constants.appOwnership !== "expo") {
-  try {
-    const admob = require("react-native-google-mobile-ads");
-    const adUnitId = __DEV__
-      ? admob.TestIds.REWARDED
-      : "ca-app-pub-4604843322018757/2967656297";
-    rewardedAd = admob.RewardedAd.createForAdRequest(adUnitId, {
-      requestNonPersonalizedAdsOnly: true,
-    });
-    RewardedAdEventType = admob.RewardedAdEventType;
-    AdEventType = admob.AdEventType;
-  } catch {
-    // Native module not linked in this build
-  }
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -341,6 +316,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const scrollYRef = useRef(0);
   const scoreCardRef = useRef<View>(null);
   const scoreTargetRef = useRef({ x: SCREEN_W / 4, y: 80 });
+  const rewardedAdRef = useRef<any>(null);
 
   useEffect(() => {
     return () => {
@@ -350,18 +326,46 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   }, []);
 
   useEffect(() => {
-    if (!rewardedAd) return;
-    const unsubLoaded = rewardedAd.addAdEventListener(AdEventType.LOADED, () => setAdLoaded(true));
-    const unsubClosed = rewardedAd.addAdEventListener(AdEventType.CLOSED, () => {
-      setAdLoaded(false);
-      rewardedAd.load();
-    });
-    const unsubEarned = rewardedAd.addAdEventListener(
-      RewardedAdEventType.EARNED_REWARD,
-      () => performAddRow(),
-    );
-    rewardedAd.load();
-    return () => { unsubLoaded(); unsubClosed(); unsubEarned(); };
+    if (Constants.appOwnership === "expo") return;
+
+    let cancelled = false;
+    const unsubs: Array<() => void> = [];
+
+    (async () => {
+      try {
+        const admob = require("react-native-google-mobile-ads");
+        await admob.default().initialize();
+        if (cancelled) return;
+
+        const adUnitId = __DEV__
+          ? admob.TestIds.REWARDED
+          : "ca-app-pub-4604843322018757/2967656297";
+        const ad = admob.RewardedAd.createForAdRequest(adUnitId, {
+          requestNonPersonalizedAdsOnly: true,
+        });
+
+        unsubs.push(ad.addAdEventListener(admob.AdEventType.LOADED, () => setAdLoaded(true)));
+        unsubs.push(ad.addAdEventListener(admob.AdEventType.CLOSED, () => {
+          setAdLoaded(false);
+          ad.load();
+        }));
+        unsubs.push(ad.addAdEventListener(
+          admob.RewardedAdEventType.EARNED_REWARD,
+          () => performAddRow(),
+        ));
+
+        rewardedAdRef.current = ad;
+        ad.load();
+      } catch {
+        // Native module missing or initialize failed — Add Row will show "Ads not available".
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((u) => u());
+      rewardedAdRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -837,16 +841,17 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       performAddRow();
       return;
     }
-    if (!rewardedAd) {
+    const ad = rewardedAdRef.current;
+    if (!ad) {
       showToast("Ads not available", "warn");
       return;
     }
     if (adLoaded) {
-      rewardedAd.show();
+      ad.show();
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       showToast("Ad not ready — try again", "warn");
-      rewardedAd.load();
+      ad.load();
     }
   }
 
@@ -1101,7 +1106,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
 
                   return (
                     <Animated.View
-                      key={cell.id}
+                      key={`${cell.id}-${isPopping ? "pop" : "idle"}`}
                       renderToHardwareTextureAndroid
                       style={[
                         gs.cellWrap,
@@ -1639,7 +1644,7 @@ const gs = StyleSheet.create({
     fontSize: CELL_SIZE > 36 ? 18 : 14,
     fontWeight: "700", color: C.ink,
   },
-  cellNumGhost: { color: C.ghost },
+  cellNumGhost: { color: Platform.OS === "ios" ? "#b8ab90" : C.ghost },
   cellNumFrozen: { color: "#2a6fa8", fontWeight: "900" },
   cellNumSelected: { color: "#3d2000" },
   cellNumPopping: { color: "#fff" },

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"C:/Users/can/Desktop/Yeni klasör \\(3\\)/numbermatch-rn/screens\")",
+      "Read(//c/Users/can/Desktop/Yeni klasör \\(3\\)/numbermatch-rn/assets/**)",
+      "Bash(npx expo *)",
+      "PowerShell(Get-Command node, npm, npx -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem \"C:\\\\Program Files\\\\nodejs\", \"$env:APPDATA\\\\npm\", \"$env:LOCALAPPDATA\\\\Programs\\\\nodejs\", \"$env:LOCALAPPDATA\\\\fnm_multishells\" -ErrorAction SilentlyContinue | Select-Object FullName | Select-Object -First 20)"
+    ]
+  }
+}
