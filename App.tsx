@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Animated } from "react-native";
+import { Animated, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
 import GameScreen from "./screens/GameScreen";
+import SplashScreen from "./screens/SplashScreen";
 
 type Screen = "menu" | "game";
 export type GameMode = "endless" | "golden" | "timeattack" | "freeze" | "tutorial";
@@ -13,6 +14,7 @@ export default function App() {
   const [mode, setMode] = useState<GameMode>("endless");
   const [crowns, setCrowns] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [splashDone, setSplashDone] = useState(false);
   const [needsTutorial, setNeedsTutorial] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
@@ -59,7 +61,11 @@ export default function App() {
     navigateTo("game", 1, "tutorial");
   }
 
-  if (!loaded) return null;
+  if (!splashDone) {
+    return <SplashScreen onDone={() => setSplashDone(true)} />;
+  }
+
+  if (!loaded) return <View style={{ flex: 1, backgroundColor: "#f5efe6" }} />;
 
   return (
     <Animated.View style={{ flex: 1, opacity: fadeAnim }}>

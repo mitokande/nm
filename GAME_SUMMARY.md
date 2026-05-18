@@ -8,22 +8,30 @@ Number Match is a mobile puzzle game built with React Native and Expo. The playe
 
 ## Screens
 
+### Splash Screen (`screens/SplashScreen.tsx`)
+- Plays on every app launch before the main menu appears.
+- Logo springs in from tiny (scale 0.1) with a natural bounce animation.
+- Title "Number Match" and uppercase tagline fade in 120 ms after the logo settles.
+- 900 ms hold, then the whole screen fades out and hands control to `App.tsx`.
+- Tap anywhere to skip immediately.
+- Runs in parallel with AsyncStorage loading — no startup delay.
+
 ### Main Menu (`screens/MainMenu.tsx`)
 - Displays the player's current crown balance in the top-right corner.
-- **Endless Mode card** — starts at stage 1.
+- **Endless Mode card** — shows "Continue · Endless · Stage N of 6" if progress exists, otherwise "Play". Resumes at the saved stage.
 - **Golden Garden card** — gem-collection mode; tracks progress across levels.
 - **Time Attack card** — 60-second sprint; shows personal best score.
-- **Freeze Mode card** — icy blue theme; starts at stage 1.
+- **Freeze Mode card** — icy blue theme; shows current stage in subtitle if progress exists, resumes from saved stage.
 - **Daily card** — locked, coming soon.
 - Entrance fade + slide animation on first load.
 
 ### Game Screen (`screens/GameScreen.tsx`)
 - Header: back button, stage label (colour-coded per mode), pause/resume toggle.
 - Stats bar: current score (animated bump on change), crown balance / timer, remaining active cells. In Freeze Mode the LEFT card also shows a `❄ N` frozen-cell sub-count.
-- Combo slot (fixed 36 px height) between stats and board — combo pill appears here without shifting the board.
+- In Tutorial mode: tip banner replaces the combo slot — shows the current step's instruction with a color-coded left border (coral = identical, teal = sum-to-10, gold = path).
 - Scrollable 9-column game board.
-- Action bar: Add Row button and Hint button, each with a remaining-count badge.
-- How-to instruction strip at the bottom.
+- Action bar: Add Row button and Hint button, each with a remaining-count badge. Hidden in Tutorial mode.
+- How-to instruction strip at the bottom. Hidden in Tutorial mode.
 - Combo banner, toast notifications, floating score popups, and mega-combo overlay.
 
 ---
@@ -32,10 +40,11 @@ Number Match is a mobile puzzle game built with React Native and Expo. The playe
 
 | Mode | Key | Description |
 |---|---|---|
-| **Endless** | `"endless"` | Clear the board stage by stage (1–6), no time limit. |
+| **Endless** | `"endless"` | Clear the board stage by stage (1–6), no time limit. Progress saved across sessions. |
 | **Golden Garden** | `"golden"` | Match specific gem-bearing cells to hit collection targets. |
 | **Time Attack** | `"timeattack"` | Score as high as possible in 60 s; each match adds 1–2 s. |
-| **Freeze Mode** | `"freeze"` | Board starts with frozen cells; thaw them by matching orthogonally adjacent pairs. |
+| **Freeze Mode** | `"freeze"` | Board starts with frozen cells; thaw them by matching orthogonally adjacent pairs. Progress saved. |
+| **Tutorial** | `"tutorial"` | 3-stage interactive onboarding. Auto-starts on first launch. Forced-tap overlay guides each step. |
 
 ---
 
@@ -152,27 +161,6 @@ All cells — including those that started frozen — must be matched. The stage
 | 5 | 45 | 5 | First 5-row stage |
 | 6 | 54 | 6 | Largest board, fully unique layout |
 
----
-
-## Animations
-
-| Element | Animation |
-|---|---|
-| Cell selection | Spring bounce (scale 0.82 → 1) |
-| Invalid tap | Horizontal shake (translateX, 5 frames) |
-| Frozen cell tap | Same horizontal shake as invalid tap |
-| Matched pair | Scale pop 1 → 1.3 → 0, sage-green background flash |
-| Match line | Rotated pill between matched cells; scaleX 0 → 1 (80 ms) then opacity fade (120 ms) |
-| Cell thaw | Spring scale burst 1 → 1.3 → 1 |
-| Hint cells | Looping scale pulse 1 → 1.12 → 1 |
-| Floating score | Float upward + scale burst + fade out (900 ms) |
-| Row clearing | Opacity flash before removal |
-| Board shake | translateX shake triggered at combo ≥ 4 |
-| Combo banner | Spring scale + rotation wobble on every increment |
-| Mega combo | Scale burst + fade overlay at combo ≥ 5 |
-| Score counter | Spring bump (scale 1.4 → 1) on each point gain |
-| Toast | Slide up + fade in |
-| Main menu | Fade + slide entrance on mount |
 
 ---
 
@@ -187,6 +175,9 @@ All persistent data is stored via `@react-native-async-storage/async-storage`.
 | `hiscore_freeze_1` … `hiscore_freeze_6` | integer | Best score per Freeze stage |
 | `hiscore_timeattack` | integer | Best Time Attack score |
 | `golden_done_<id>` | `"1"` | Completion flag per Golden Garden level |
+| `endless_stage` | integer | Last-reached Endless stage (for "Continue" resume) |
+| `freeze_stage` | integer | Last-reached Freeze stage (for resume) |
+| `onboarding_done` | `"1"` | Set after Tutorial is completed; skips tutorial on subsequent launches |
 
 Crown data loads on app startup; best scores load each time a stage begins or is restarted.
 
@@ -226,15 +217,71 @@ Shadows use warm amber-brown tints (`#b89070`) instead of black. Border radii ar
 
 ---
 
+## Tutorial Mode
+
+Defined in `screens/tutorialStages.ts` (`TutorialStage` + `TutorialStep` interfaces, `TUTORIAL_STAGES` array).
+
+### How It Works
+- **Auto-starts on first launch** — if `onboarding_done` is not set, `App.tsx` routes directly to Tutorial stage 1 instead of the main menu.
+- The tutorial board is pre-filled with a fixed `values` array per stage (no random generation).
+- Each step specifies a `pair` of cell indices the player must tap. Tapping any other cell shakes it and shows a toast: "Tap the glowing cells!". The correct cells pulse with the existing hint-pair animation.
+- After each valid match the step advances and the next pair is highlighted.
+- Power-ups (Add Row, Hint) are disabled and hidden throughout the tutorial.
+- No crowns are awarded and no scores are saved for tutorial stages.
+
+### Tutorial Stages
+
+| Stage | Title | Steps | Teaches |
+|---|---|---|---|
+| 1 | Same numbers match | 5 | Identical pairs; consecutive wrap across row end |
+| 2 | Pairs that sum to 10 also match | 5 | Sum-to-10 pairs; wrapping demonstrated again |
+| 3 | Path connections | 6 | Diagonal, vertical, long-distance (gap-clearing) matches |
+
+### Completion
+- Stage 3 complete modal shows "You're all set! →" → calls `onTutorialComplete` in `App.tsx` → sets `onboarding_done = "1"`, clears `needsTutorial` state, navigates to main menu.
+- Dev button in `__DEV__` mode clears `onboarding_done` and restarts tutorial.
+
+---
+
+## Animations
+
+| Element | Animation |
+|---|---|
+| App launch logo | Spring in (scale 0.1 → 1) + fade; text fades in after 120 ms; whole screen fades out |
+| Cell selection | Spring bounce (scale 0.82 → 1) |
+| Invalid tap | Horizontal shake (translateX, 5 frames) |
+| Frozen cell tap | Same horizontal shake as invalid tap |
+| Matched pair | Scale pop 1 → 1.3 → 0, sage-green background flash |
+| Match line | Rotated pill between matched cells; scaleX 0 → 1 (80 ms) then opacity fade (120 ms) |
+| Cell thaw | Spring scale burst 1 → 1.3 → 1 |
+| Hint / tutorial cells | Looping scale pulse 1 → 1.12 → 1 |
+| Floating score | Float upward + scale burst + fade out (900 ms) |
+| Row clearing | Opacity flash before removal |
+| Board shake | translateX shake triggered at combo ≥ 4 |
+| Combo banner | Spring scale + rotation wobble on every increment |
+| Mega combo | Scale burst + fade overlay at combo ≥ 5 |
+| Score counter | Spring bump (scale 1.4 → 1) on each point gain |
+| Toast | Slide up + fade in |
+| Main menu | Fade + slide entrance on mount |
+| Screen transitions | Fade out (180 ms) → swap → fade in (280 ms) |
+
+---
+
 ## File Structure
 
 ```
-App.tsx                   — Root: screen router, crown state, AsyncStorage bootstrap
+App.tsx                   — Root: splash gate, screen router, crown state, tutorial state, AsyncStorage bootstrap
 screens/
-  MainMenu.tsx            — Mode cards (Endless, Golden Garden, Time Attack, Freeze, Daily locked)
-  GameScreen.tsx          — All game logic, board rendering, modals, animations
+  SplashScreen.tsx        — Opening logo animation (spring in, title fade, hold, fade out)
+  MainMenu.tsx            — Mode cards; shows stage progress / "Continue" for Endless & Freeze
+  GameScreen.tsx          — All game logic, board rendering, modals, animations, tutorial tap-blocking
+  tutorialStages.ts       — Tutorial stage definitions (values, forced-tap steps, tips)
   goldenStages.ts         — Golden Garden stage definitions (values, gem positions, targets)
   freezeStages.ts         — Freeze Mode stage definitions (values, frozenIndices)
   sound.ts                — Sound playback helpers
-assets/                   — App icons and splash screen
+assets/
+  logo.png                — Master logo (source for all icon variants)
+  icon.png                — App icon 1024×1024, logo on #f5efe6 background
+  adaptive-icon.png       — Android adaptive icon 1024×1024, transparent background
+  splash-icon.png         — Expo splash image 1242×2436, large logo centred
 ```

@@ -1655,7 +1655,7 @@ const gs = StyleSheet.create({
 
   primaryBtn: {
     width: "100%", backgroundColor: C.ink, borderRadius: 18,
-    paddingVertical: 14, alignItems: "center",
+    paddingVertical: 17, paddingHorizontal: 24, alignItems: "center",
     shadowColor: "rgba(26,29,46,1)", shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.30, shadowRadius: 12, elevation: 5,
   },
@@ -1663,13 +1663,13 @@ const gs = StyleSheet.create({
 
   secondaryBtn: {
     width: "100%", backgroundColor: C.white,
-    borderRadius: 18, paddingVertical: 12, alignItems: "center",
+    borderRadius: 18, paddingVertical: 15, paddingHorizontal: 24, alignItems: "center",
     borderWidth: 1, borderColor: "rgba(26,29,46,0.10)",
   },
   secondaryBtnText: { color: C.ink, fontWeight: "700", fontSize: 15 },
 
   ghostBtn: {
-    paddingVertical: 8, paddingHorizontal: 16,
+    paddingVertical: 10, paddingHorizontal: 16,
   },
   ghostBtnText: { color: C.inkSoft, fontWeight: "700", fontSize: 14 },
 
