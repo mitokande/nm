@@ -107,7 +107,7 @@ When `adds === 0` the button shows a 📺 icon with a terracotta "AD" badge and 
 - If the ad hasn't loaded yet → shows "Ad not ready — try again" toast and triggers a reload.
 - In Expo Go (native module absent) → shows "Ads not available" toast; no crash.
 
-Ad setup: `react-native-google-mobile-ads`, App ID `ca-app-pub-4604843322018757~1702676089`, rewarded unit `ca-app-pub-4604843322018757/2967656297`. Test IDs used in `__DEV__` builds. Module is lazy-required and guarded with `Constants.appOwnership !== "expo"` so Expo Go is unaffected.
+Ad setup: `react-native-google-mobile-ads`. iOS App ID `ca-app-pub-4604843322018757~1702676089`, rewarded unit `ca-app-pub-4604843322018757/2967656297`. Android App ID `ca-app-pub-4604843322018757~6145619448`, rewarded unit `ca-app-pub-4604843322018757/9772661819`. Test IDs used in `__DEV__` builds. Module is lazy-required and guarded with `Constants.appOwnership !== "expo"` so Expo Go is unaffected.
 
 ---
 

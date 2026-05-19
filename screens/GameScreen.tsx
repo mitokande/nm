@@ -326,38 +326,69 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   }, []);
 
   useEffect(() => {
-    if (Constants.appOwnership === "expo") return;
-
     let cancelled = false;
     const unsubs: Array<() => void> = [];
 
+    let admob: any;
+    try {
+      admob = require("react-native-google-mobile-ads");
+    } catch (e) {
+      console.log("[ads] native module not available (Expo Go?)", e);
+      return;
+    }
+
     (async () => {
       try {
-        const admob = require("react-native-google-mobile-ads");
-        await admob.default().initialize();
+        await admob.default()
+          .setRequestConfiguration({
+            testDeviceIdentifiers: ["EMULATOR"],
+          })
+          .catch((e: any) => console.log("[ads] setRequestConfiguration failed", e));
+
+        const initStatus = await admob.default().initialize();
+        console.log("[ads] initialized", initStatus);
         if (cancelled) return;
 
         const adUnitId = __DEV__
           ? admob.TestIds.REWARDED
-          : "ca-app-pub-4604843322018757/2967656297";
+          : Platform.OS === "android"
+            ? "ca-app-pub-4604843322018757/9772661819"
+            : "ca-app-pub-4604843322018757/2967656297";
+        console.log("[ads] creating rewarded ad", { adUnitId, platform: Platform.OS, dev: __DEV__ });
+
         const ad = admob.RewardedAd.createForAdRequest(adUnitId, {
           requestNonPersonalizedAdsOnly: true,
         });
 
-        unsubs.push(ad.addAdEventListener(admob.AdEventType.LOADED, () => setAdLoaded(true)));
+        unsubs.push(ad.addAdEventListener(admob.RewardedAdEventType.LOADED, () => {
+          console.log("[ads] LOADED");
+          setAdLoaded(true);
+        }));
+        unsubs.push(ad.addAdEventListener(admob.AdEventType.ERROR, (err: any) => {
+          console.log("[ads] ERROR", err?.code, err?.message, err);
+          setAdLoaded(false);
+        }));
+        unsubs.push(ad.addAdEventListener(admob.AdEventType.OPENED, () => {
+          console.log("[ads] OPENED");
+        }));
         unsubs.push(ad.addAdEventListener(admob.AdEventType.CLOSED, () => {
+          console.log("[ads] CLOSED → reloading");
           setAdLoaded(false);
           ad.load();
         }));
         unsubs.push(ad.addAdEventListener(
           admob.RewardedAdEventType.EARNED_REWARD,
-          () => performAddRow(),
+          (reward: any) => {
+            console.log("[ads] EARNED_REWARD", reward);
+            performAddRow();
+          },
         ));
 
         rewardedAdRef.current = ad;
+        console.log("[ads] calling ad.load()");
         ad.load();
-      } catch {
-        // Native module missing or initialize failed — Add Row will show "Ads not available".
+      } catch (e) {
+        console.log("[ads] init/setup failed", e);
       }
     })();
 
@@ -843,6 +874,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     }
     const ad = rewardedAdRef.current;
     if (!ad) {
+      console.log("rewardedAdRef", rewardedAdRef);
       showToast("Ads not available", "warn");
       return;
     }
