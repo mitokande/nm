@@ -264,7 +264,8 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const [hintPair, setHintPair] = useState<[number, number] | null>(() => {
     if (mode === "tutorial") {
       const t = TUTORIAL_STAGES.find((s) => s.id === initialStage) ?? TUTORIAL_STAGES[0];
-      return t.steps[0].pair;
+      const s0 = t.steps[0];
+      return s0.action === "match" ? s0.pair : null;
     }
     return null;
   });
@@ -334,6 +335,14 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       admob = require("react-native-google-mobile-ads");
     } catch (e) {
       console.log("[ads] native module not available (Expo Go?)", e);
+      return;
+    }
+
+    // In Expo Go the require may silently succeed but the native binding is absent.
+    // The TurboModuleRegistry Invariant Violation gets logged, then admob.default
+    // is undefined. Bail out before we try to call it.
+    if (!admob || typeof admob.default !== "function") {
+      console.log("[ads] module loaded but native binding missing — skipping (Expo Go?)");
       return;
     }
 
@@ -702,13 +711,21 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
 
   function handleTap(idx: number) {
     if (paused || stageComplete || timeUp) return;
+    if (poppingPair !== null) return;
     const cell = cells[idx];
     if (!cell?.active) return;
 
     if (mode === "tutorial") {
       const tStage = TUTORIAL_STAGES.find((s) => s.id === stage);
       const step = tStage?.steps[tutStep];
-      if (step && !step.pair.includes(idx)) {
+      if (step && step.action !== "match") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShakingCell(idx);
+        const target = step.action === "hint" ? "💡 hint" : "＋ add row";
+        if (!toast) showToast(`Tap the ${target} button!`, "warn", 1000);
+        return;
+      }
+      if (step && step.action === "match" && !step.pair.includes(idx)) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setShakingCell(idx);
         if (!toast) showToast("Tap the glowing cells!", "warn", 1000);
@@ -833,12 +850,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       setSelected(null);
       setHintPair(null);
       if (mode === "tutorial") {
-        const tStage = TUTORIAL_STAGES.find((s) => s.id === stage)!;
-        const nextStep = tutStep + 1;
-        setTutStep(nextStep);
-        if (nextStep < tStage.steps.length) {
-          setHintPair(tStage.steps[nextStep].pair);
-        }
+        advanceTutorialStep();
       }
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -847,6 +859,24 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       setSelected(idx);
       setCombo(0);
     }
+  }
+
+  function advanceTutorialStep() {
+    const tStage = TUTORIAL_STAGES.find((ts) => ts.id === stage);
+    if (!tStage) return;
+    const nextStep = tutStep + 1;
+    setTutStep(nextStep);
+    if (nextStep >= tStage.steps.length) {
+      // Stage 4 leaves leftover cells after Add Row, so force completion here
+      // instead of waiting for the rem===0 effect.
+      setStageComplete(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      playSound("stage_win", 0.85);
+      return;
+    }
+    const ns = tStage.steps[nextStep];
+    if (ns.action === "match") setHintPair(ns.pair);
+    else setHintPair(null);
   }
 
   function performAddRow() {
@@ -867,6 +897,19 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
 
   function handleAddRow() {
     if (paused || stageComplete) return;
+    if (mode === "tutorial") {
+      const tStage = TUTORIAL_STAGES.find((s) => s.id === stage);
+      const step = tStage?.steps[tutStep];
+      if (!step || step.action !== "add") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        showToast("Not yet!", "warn", 800);
+        return;
+      }
+      setAdds((n) => Math.max(0, n - 1));
+      performAddRow();
+      advanceTutorialStep();
+      return;
+    }
     if (adds > 0) {
       setAdds((n) => n - 1);
       performAddRow();
@@ -889,6 +932,25 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
 
   function handleHint() {
     if (paused || stageComplete) return;
+    if (mode === "tutorial") {
+      const tStage = TUTORIAL_STAGES.find((s) => s.id === stage);
+      const step = tStage?.steps[tutStep];
+      if (!step || step.action !== "hint") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        showToast("Not yet!", "warn", 800);
+        return;
+      }
+      const pair = findHint(cells, destroyedRows);
+      if (!pair) return;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      playSound("hint", 0.7);
+      setHints((n) => Math.max(0, n - 1));
+      setHintPair(pair);
+      advanceTutorialStep();
+      // advanceTutorialStep sets hintPair for the next match step (which equals `pair`
+      // by stage 4 design); leave it on screen until the user matches.
+      return;
+    }
     if (hints <= 0) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       playSound("error", 0.5);
@@ -910,8 +972,13 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   }
 
   function startStage(s: number) {
-    if (mode === "endless") AsyncStorage.setItem("endless_stage", String(s));
-    else if (mode === "freeze") AsyncStorage.setItem("freeze_stage", String(s));
+    if (mode === "endless" || mode === "freeze") {
+      const key = mode === "endless" ? "endless_stage" : "freeze_stage";
+      AsyncStorage.getItem(key).then((prev) => {
+        const prevNum = prev ? parseInt(prev, 10) : 1;
+        if (s > prevNum) AsyncStorage.setItem(key, String(s));
+      });
+    }
     setCells(buildCellsForMode(s, mode));
     setTargets(mode === "golden" ? (getGoldenStage(s)?.targets ?? {}) : {});
     setCollected({});
@@ -927,15 +994,16 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     setDestroyedRows([]);
     setPoppingPair(null);
     setShakingCell(null);
-    setAdds(mode === "timeattack" || mode === "tutorial" ? 0 : mode === "freeze" ? 7 : 5);
-    setHints(mode === "tutorial" ? 0 : 2);
+    setAdds(mode === "timeattack" ? 0 : mode === "tutorial" ? (s === 4 ? 1 : 0) : mode === "freeze" ? 7 : 5);
+    setHints(mode === "tutorial" ? (s === 4 ? 1 : 0) : 2);
     setNoMoves(false);
     setMatchLine(null);
     setThawingCells([]);
     if (mode === "tutorial") {
       setTutStep(0);
       const tStage = TUTORIAL_STAGES.find((ts) => ts.id === s);
-      if (tStage) setHintPair(tStage.steps[0].pair);
+      const s0 = tStage?.steps[0];
+      if (s0 && s0.action === "match") setHintPair(s0.pair);
     }
     if (mode === "timeattack") {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -970,7 +1038,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
           {mode === "tutorial" ? (
             <>
               <Text style={gs.titleLabel}>Tutorial · </Text>
-              <Text style={[gs.titleNum, { color: C.primary }]}>{stage} of 3</Text>
+              <Text style={[gs.titleNum, { color: C.primary }]}>{stage} of 4</Text>
             </>
           ) : mode === "timeattack" ? (
             <Text style={[gs.titleNum, { color: C.danger }]}>Time Attack</Text>
@@ -1056,9 +1124,18 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
         const tStage = TUTORIAL_STAGES.find((s) => s.id === stage);
         const step = tStage?.steps[tutStep];
         if (!step) return <View style={gs.comboSlot} />;
-        const tipColor = step.matchType === "sum10" ? C.teal : step.matchType === "path" ? C.crown : C.coral;
-        const tipBg = step.matchType === "sum10" ? C.tealSoft : step.matchType === "path" ? C.crownSoft : C.coralSoft;
-        const tipLabel = step.matchType === "sum10" ? "SUM TO 10" : step.matchType === "path" ? "PATH" : "MATCH";
+        const isPowerup = step.action === "hint" || step.action === "add";
+        const tipColor = isPowerup
+          ? C.primary
+          : step.matchType === "sum10" ? C.teal : step.matchType === "path" ? C.crown : C.coral;
+        const tipBg = isPowerup
+          ? C.coralSoft
+          : step.matchType === "sum10" ? C.tealSoft : step.matchType === "path" ? C.crownSoft : C.coralSoft;
+        const tipLabel = step.action === "hint"
+          ? "HINT"
+          : step.action === "add"
+          ? "ADD ROW"
+          : step.matchType === "sum10" ? "SUM TO 10" : step.matchType === "path" ? "PATH" : "MATCH";
         return (
           <View style={[gs.tutTip, { borderLeftColor: tipColor, backgroundColor: tipBg }]}>
             <Text style={[gs.tutTipLabel, { color: tipColor }]}>{tipLabel}</Text>
@@ -1219,7 +1296,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       </Animated.View>
 
       {/* Actions */}
-      {mode !== "tutorial" && <View style={gs.actions}>
+      {(mode !== "tutorial" || stage === 4) && <View style={gs.actions}>
         {mode !== "timeattack" && (
           <TouchableOpacity
             style={[
@@ -1320,21 +1397,23 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
           <View style={gs.card}>
             {mode === "tutorial" ? (
               <>
-                <Text style={gs.winEmoji}>{stage < 3 ? "✓" : "🎯"}</Text>
+                <Text style={gs.winEmoji}>{stage < 4 ? "✓" : "🎯"}</Text>
                 <Text style={gs.cardTitle}>
-                  {stage < 3 ? `Lesson ${stage} done!` : "You're ready!"}
+                  {stage < 4 ? `Lesson ${stage} done!` : "You're ready!"}
                 </Text>
                 <Text style={[gs.winStatLabel, { textAlign: "center", lineHeight: 22 }]}>
                   {stage === 1
                     ? "Next: pairs that sum to 10"
                     : stage === 2
-                    ? "Last lesson: path connections"
+                    ? "Next: path connections"
+                    : stage === 3
+                    ? "Last lesson: power-ups"
                     : "Head to the main menu and start playing!"}
                 </Text>
                 <TouchableOpacity
                   style={gs.primaryBtn}
                   onPress={() => {
-                    if (stage < 3) {
+                    if (stage < 4) {
                       startStage(stage + 1);
                     } else {
                       onTutorialComplete?.();
@@ -1343,7 +1422,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                   activeOpacity={0.8}
                 >
                   <Text style={gs.primaryBtnText}>
-                    {stage < 3 ? "Next Lesson →" : "Start Playing! →"}
+                    {stage < 4 ? "Next Lesson →" : "Start Playing! →"}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1406,7 +1485,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                       const nextId = i >= 0 && i < ids.length - 1 ? ids[i + 1] : ids[0];
                       startStage(nextId);
                     } else {
-                      startStage(stage < 6 ? stage + 1 : 1);
+                      startStage(stage < 6 ? stage + 1 : stage);
                     }
                   }}
                   activeOpacity={0.8}

@@ -1,5 +1,4 @@
 {
-  "model": "claude-opus-4-7",
   "permissions": {
     "allow": [
       "Bash(npx expo *)",
@@ -27,7 +26,9 @@
       "Bash(node -e \"require\\('jimp'\\)\")",
       "Bash(python3 -c \"from PIL import Image; print\\('PIL available'\\)\")",
       "Bash(pip3 install *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(echo \"exit=$?\")"
     ]
-  }
+  },
+  "model": "claude-opus-4-7"
 }
