@@ -462,16 +462,14 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     }
   }, [shakingCell]);
 
-  // Spring bounce on selection
+  // Reset selectBounce when nothing is selected. The actual spring on first selection
+  // is triggered inline in handleTap so it doesn't fire on cell-to-cell switches
+  // (e.g. invalid-pair transitions), which would leave the new cell mid-oscillation
+  // when its node mounts after the shake.
   useEffect(() => {
-    if (selected !== null) {
-      selectBounce.setValue(0.82);
-      Animated.spring(selectBounce, {
-        toValue: 1,
-        friction: 3,
-        tension: 350,
-        useNativeDriver: true,
-      }).start();
+    if (selected === null) {
+      selectBounce.stopAnimation();
+      selectBounce.setValue(1);
     }
   }, [selected]);
 
@@ -743,12 +741,21 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     if (selected === null) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       playSound("select", 0.6);
+      selectBounce.setValue(0.82);
+      Animated.spring(selectBounce, {
+        toValue: 1,
+        friction: 3,
+        tension: 350,
+        useNativeDriver: true,
+      }).start();
       setSelected(idx);
       return;
     }
     if (selected === idx) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       playSound("select", 0.45);
+      selectBounce.stopAnimation();
+      selectBounce.setValue(1);
       setSelected(null);
       return;
     }
@@ -855,6 +862,8 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       playSound("error", 0.6);
+      selectBounce.stopAnimation();
+      selectBounce.setValue(1);
       setShakingCell(idx);
       setSelected(idx);
       setCombo(0);
@@ -1206,20 +1215,28 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                   const isFrozen = !!cell.frozen;
                   const ghost = !cell.active;
 
-                  const transforms: any[] = [];
-                  if (isPopping) transforms.push({ scale: popScale });
-                  else if (isShaking) transforms.push({ translateX: shakeAnim });
-                  else if (isThawing) transforms.push({ scale: thawScale });
-                  else if (isSelected) transforms.push({ scale: selectBounce });
-                  else if (isHint) transforms.push({ scale: hintPulse });
+                  let scaleVal: any = 1;
+                  let scaleSrc = "idle";
+                  if (isPopping) { scaleVal = popScale; scaleSrc = "pop"; }
+                  else if (isThawing) { scaleVal = thawScale; scaleSrc = "thaw"; }
+                  else if (isSelected && !isShaking) { scaleVal = selectBounce; scaleSrc = "sel"; }
+                  else if (isHint && !isShaking) { scaleVal = hintPulse; scaleSrc = "hint"; }
 
+                  const transforms: any[] = [{ scale: scaleVal }];
+                  if (isShaking) transforms.push({ translateX: shakeAnim });
+
+                  // Include the scale source in the key so the Animated.View remounts
+                  // when transitioning between animated/static scale. RN's Animated
+                  // doesn't reliably unbind a previous Animated.Value from a transform
+                  // key when it switches to a literal, so the old animated value can
+                  // stay cached on the native node. A fresh remount avoids that.
                   return (
                     <Animated.View
-                      key={`${cell.id}-${isPopping ? "pop" : "idle"}`}
+                      key={`${cell.id}-${scaleSrc}`}
                       renderToHardwareTextureAndroid
                       style={[
                         gs.cellWrap,
-                        transforms.length > 0 ? { transform: transforms } : null,
+                        { transform: transforms },
                       ]}
                     >
                       {cell.gem && cell.active && (
