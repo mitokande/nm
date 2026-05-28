@@ -6,24 +6,31 @@ import {
 import * as Haptics from "expo-haptics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { playSound } from "./sound";
-import { GOLDEN_STAGES, GEM_EMOJI, GEM_NAME, GemType, GoldenStage } from "./goldenStages";
-import { FREEZE_STAGES } from "./freezeStages";
+import { GEM_EMOJI, GEM_NAME, GemType, GoldenStage } from "./goldenStages";
 import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
 import Constants from "expo-constants";
+import levelsJson from "./levels.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COLS = 9;
 
-const STAGES: Record<number, number[]> = {
-  1: [3, 1, 2, 8, 5, 5, 7, 3, 9, 4, 6, 1, 2, 4, 8, 7, 9, 1, 3, 6, 5, 5, 2, 8, 4, 7, 9, 1],
-  2: [4, 6, 7, 3, 2, 8, 5, 5, 1, 9, 3, 7, 6, 4, 8, 2, 1, 9, 5, 5, 3, 7, 4, 6, 8, 2, 9, 1, 3, 7, 5, 5, 4, 6, 8, 2],
-  3: [2, 8, 3, 7, 4, 6, 5, 5, 9, 1, 7, 3, 6, 4, 8, 2, 1, 9, 5, 5, 8, 2, 6, 4, 3, 7, 1, 9, 5, 5, 4, 6, 7, 3, 2, 8, 9, 1, 5, 5, 6, 4, 3, 7],
-  4: [3, 9, 7, 3, 2, 4, 5, 7, 1, 2, 4, 2, 1, 5, 9, 8, 4, 2, 5, 5, 3, 6, 2, 7, 5, 7, 1, 6, 4, 1, 5, 9, 4, 9, 4, 3],
-  5: [3, 9, 7, 3, 2, 4, 5, 7, 1, 2, 4, 2, 1, 5, 9, 8, 4, 2, 5, 5, 3, 6, 2, 7, 5, 7, 1, 6, 4, 1, 5, 9, 4, 9, 4, 3, 9, 2, 4, 5, 7, 3, 4, 2, 1],
-  6: [2, 7, 5, 3, 8, 1, 9, 4, 6, 5, 3, 9, 4, 6, 7, 2, 8, 1, 6, 4, 1, 8, 3, 9, 2, 7, 5, 5, 8, 2, 7, 5, 4, 6, 1, 9, 3, 7, 3, 2, 9, 8, 5, 5, 4, 6, 1, 4, 6, 9, 1, 8, 2, 7],
-};
+interface FreezeStage { id: number; values: number[]; frozenIndices: number[]; }
+
+const STAGES: Record<number, number[]> = Object.fromEntries(
+  levelsJson.endless.map((s) => [s.id, s.values])
+);
+
+const FREEZE_STAGES: FreezeStage[] = levelsJson.freeze;
+
+const GOLDEN_STAGES: GoldenStage[] = levelsJson.golden.map((g) => ({
+  id: g.id,
+  name: g.name,
+  values: g.values,
+  gems: Object.fromEntries(Object.entries(g.gems).map(([k, v]) => [Number(k), v as GemType])),
+  targets: g.targets as Partial<Record<GemType, number>>,
+}));
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -656,7 +663,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       if (mode !== "tutorial") {
-        onCrownsEarned(100);
+        onCrownsEarned(1);
         if (score > bestScore) {
           setBestScore(score);
           const key = mode === "freeze" ? `hiscore_freeze_${stage}` : `hiscore_${stage}`;
@@ -671,7 +678,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     const rem = cells.filter((c) => c.active).length;
     if (rem === 0 && cells.length > 0 && clearingRows.length === 0) {
       setTimeLeft((t) => Math.min(t + 15, 120));
-      onCrownsEarned(25);
+      onCrownsEarned(1);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       showToast("Board cleared!  +15s", "win", 1800);
@@ -695,7 +702,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     if (allMet) {
       wonRef.current = true;
       setStageComplete(true);
-      onCrownsEarned(100);
+      onCrownsEarned(1);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       AsyncStorage.setItem(`golden_done_${stage}`, "1");
@@ -1471,7 +1478,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                     </View>
                     <View style={gs.winStatRow}>
                       <Text style={gs.winStatLabel}>Crowns earned</Text>
-                      <Text style={gs.winStatValue}>+100</Text>
+                      <Text style={gs.winStatValue}>♛ +1</Text>
                     </View>
                   </View>
                 ) : (
@@ -1489,7 +1496,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                     )}
                     <View style={gs.winStatRow}>
                       <Text style={gs.winStatLabel}>Crowns earned</Text>
-                      <Text style={gs.winStatValue}>+100</Text>
+                      <Text style={gs.winStatValue}>♛ +1</Text>
                     </View>
                   </View>
                 )}

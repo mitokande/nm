@@ -4,6 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
 import GameScreen from "./screens/GameScreen";
 import SplashScreen from "./screens/SplashScreen";
+import { GardenState, defaultGardenState, normalizeGardenState } from "./screens/gardenData";
 
 type Screen = "menu" | "game";
 export type GameMode = "endless" | "golden" | "timeattack" | "freeze" | "tutorial";
@@ -13,6 +14,7 @@ export default function App() {
   const [currentStage, setCurrentStage] = useState(1);
   const [mode, setMode] = useState<GameMode>("endless");
   const [crowns, setCrowns] = useState(0);
+  const [gardenState, setGardenState] = useState<GardenState>(defaultGardenState);
   const [loaded, setLoaded] = useState(false);
   const [splashDone, setSplashDone] = useState(false);
   const [needsTutorial, setNeedsTutorial] = useState(false);
@@ -22,8 +24,12 @@ export default function App() {
     Promise.all([
       AsyncStorage.getItem("crowns"),
       AsyncStorage.getItem("onboarding_done"),
-    ]).then(([crownVal, onboardingDone]) => {
+      AsyncStorage.getItem("garden_state"),
+    ]).then(([crownVal, onboardingDone, gardenVal]) => {
       if (crownVal !== null) setCrowns(parseInt(crownVal, 10));
+      if (gardenVal) {
+        try { setGardenState(normalizeGardenState(JSON.parse(gardenVal))); } catch {}
+      }
       if (onboardingDone !== "1") {
         setNeedsTutorial(true);
         setMode("tutorial");
@@ -36,6 +42,18 @@ export default function App() {
   useEffect(() => {
     if (loaded) AsyncStorage.setItem("crowns", String(crowns));
   }, [crowns, loaded]);
+
+  useEffect(() => {
+    if (loaded) AsyncStorage.setItem("garden_state", JSON.stringify(gardenState));
+  }, [gardenState, loaded]);
+
+  function handleGardenChange(next: GardenState) {
+    setGardenState(next);
+  }
+
+  function handleSpendCrowns(amount: number) {
+    setCrowns((c) => Math.max(0, c - amount));
+  }
 
   function navigateTo(newScreen: Screen, stage = 1, m: GameMode = "endless") {
     // Intercept any game navigation if tutorial hasn't been completed yet
@@ -81,6 +99,9 @@ export default function App() {
       ) : (
         <MainMenu
           crowns={crowns}
+          gardenState={gardenState}
+          onSpendCrowns={handleSpendCrowns}
+          onGardenChange={handleGardenChange}
           onPlay={(stage, m) => navigateTo("game", stage, m)}
           onResetTutorial={handleResetTutorial}
         />

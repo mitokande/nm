@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Number Match — Level Editor</title>
+<style>
+  :root {
+    --bg: #fdf3e7;
+    --panel: #fffaf3;
+    --ink: #3d2b1f;
+    --muted: #8a7a6a;
+    --line: #e6d5bf;
+    --primary: #c96a35;
+    --good: #5baa7a;
+    --bad: #d45c5c;
+    --freeze: #3a9fdf;
+    --freeze-bg: #cce8f5;
+    --gold: #e8a020;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 14px;
+    overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .toolbar h1 { font-size: 16px; margin: 0; font-weight: 700; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar button, .toolbar label.file {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .toolbar button:hover, .toolbar label.file:hover { background: #fff; }
+  .toolbar button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .toolbar input[type="file"] { display: none; }
+  .toolbar .status { color: var(--muted); font-size: 12px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; padding: 8px 16px 0; background: var(--panel); border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+  .tab {
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 8px 8px 0 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .tab.active { background: var(--bg); color: var(--ink); border-color: var(--line); position: relative; top: 1px; }
+
+  /* Main 3-column layout */
+  .main {
+    display: grid;
+    grid-template-columns: 240px 1fr 280px;
+    gap: 16px;
+    padding: 16px;
+    flex: 1 1 auto;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    overflow: auto;
+    min-height: 0;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+  /* Stage list */
+  .stagelist { display: flex; flex-direction: column; gap: 4px; }
+  .stagelist .stage-row {
+    display: flex; align-items: center;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .stagelist .stage-row:hover { background: #fff8ec; }
+  .stagelist .stage-row.active { background: #fff; border-color: var(--primary); }
+  .stagelist .stage-row .num { font-weight: 700; margin-right: 8px; }
+  .stagelist .stage-row .meta { color: var(--muted); font-size: 12px; }
+  .stagelist .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .stagelist .actions button {
+    flex: 1 1 auto;
+    font: inherit;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .stagelist .actions button:hover { background: #fff8ec; }
+  .stagelist .actions button.danger { color: var(--bad); border-color: #f0c0c0; }
+
+  /* Center: grid */
+  .center { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .grid-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow: auto; flex: 1; min-height: 0; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 4px;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .cell {
+    position: relative;
+    aspect-ratio: 1;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ink);
+    cursor: pointer;
+    user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.08s;
+  }
+  .cell:hover { background: #fffaf3; }
+  .cell.empty { background: #f5e9d8; color: transparent; }
+  .cell.empty::after { content: "—"; color: var(--muted); font-weight: 400; opacity: 0.4; }
+  .cell.frozen { background: var(--freeze-bg); border-color: var(--freeze); }
+  .cell.frozen .freeze-mark { position: absolute; top: 2px; right: 4px; font-size: 14px; }
+  .cell.inactive { opacity: 0.25; }
+  .cell.test-first { outline: 3px solid var(--gold); }
+  .cell.test-good { background: #d3f0df !important; }
+  .cell.test-bad { background: #f5d5d5 !important; }
+  .cell .gem-badge { position: absolute; bottom: 2px; right: 4px; font-size: 14px; }
+  .cell .idx-badge { position: absolute; top: 2px; left: 4px; font-size: 9px; color: var(--muted); }
+
+  /* Grid controls */
+  .grid-controls {
+    display: flex; gap: 8px; padding: 0 16px 0;
+    align-items: center; flex-wrap: wrap;
+  }
+  .grid-controls button {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .grid-controls button:hover { background: #fff; }
+  .grid-controls .info { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+  /* Play test */
+  .playtest {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    flex: 0 0 auto;
+  }
+  .playtest h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .playtest .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .playtest button {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    background: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .playtest button.active { background: var(--gold); color: #fff; border-color: var(--gold); }
+  .playtest .result { color: var(--muted); font-size: 12px; }
+  .playtest .result.good { color: var(--good); }
+  .playtest .result.bad { color: var(--bad); }
+
+  /* Right: metadata */
+  .meta-field { margin-bottom: 12px; }
+  .meta-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .meta-field input[type="text"], .meta-field input[type="number"] {
+    width: 100%;
+    font: inherit;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .gem-target-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .gem-target-row .gem-label { flex: 1; }
+  .gem-target-row input { width: 60px; }
+  .meta-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* Picker popover */
+  .picker {
+    position: absolute;
+    z-index: 100;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px;
+    display: grid;
+    grid-template-columns: repeat(5, 28px);
+    gap: 4px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  }
+  .picker button {
+    font: inherit;
+    width: 28px; height: 28px;
+    border: 1px solid var(--line);
+    background: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .picker button.x { color: var(--muted); }
+  .picker .gem-row { grid-column: 1 / -1; display: flex; gap: 4px; }
+  .picker .gem-row button { flex: 1; padding: 4px 0; width: auto; }
+
+  .empty-state { color: var(--muted); text-align: center; padding: 40px 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="toolbar">
+    <h1>Number Match — Level Editor</h1>
+    <span class="status" id="status">Loaded from localStorage</span>
+    <div class="spacer"></div>
+    <label class="file">
+      Load JSON…
+      <input type="file" id="file-input" accept=".json,application/json" />
+    </label>
+    <button id="export-btn" class="primary">Export levels.json</button>
+    <button id="reset-btn" title="Reset to seed (the levels currently in the game)">Reset to seed</button>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-mode="endless">Endless</div>
+    <div class="tab" data-mode="freeze">Freeze</div>
+    <div class="tab" data-mode="golden">Golden</div>
+  </div>
+
+  <div class="main">
+    <div class="panel">
+      <h2>Stages</h2>
+      <div class="stagelist" id="stagelist"></div>
+      <div class="actions" id="stage-actions">
+        <button id="new-stage">+ New</button>
+        <button id="dup-stage">Duplicate</button>
+        <button id="up-stage" title="Move up">↑</button>
+        <button id="down-stage" title="Move down">↓</button>
+        <button id="del-stage" class="danger">Delete</button>
+      </div>
+    </div>
+
+    <div class="center">
+      <div class="grid-controls">
+        <button id="add-row">+ Add Row</button>
+        <button id="remove-row">− Remove Last Row</button>
+        <button id="generate" title="Fill the current stage with a procedurally generated, solvable board (overwrites values, keeps board size, frozen, gems, name).">🎲 Generate</button>
+        <span class="info" id="grid-info">—</span>
+      </div>
+      <div class="grid-wrap">
+        <div class="grid" id="grid"></div>
+      </div>
+      <div class="playtest">
+        <h2>Play test</h2>
+        <div class="row">
+          <button id="test-toggle">Enable play-test</button>
+          <button id="test-reset">Reset board</button>
+          <span class="result" id="test-result">Click two active cells to test a pair.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="meta-panel">
+      <h2>Stage details</h2>
+      <div id="meta-fields"></div>
+    </div>
+  </div>
+</div>
+
+<div id="picker-host"></div>
+
+<script>
+'use strict';
+
+/* ─── Constants (kept in sync with game) ──────────────────────────────────────
+ * If the in-game match rules ever change in screens/GameScreen.tsx (isValidPair,
+ * pathClearVisible, visibleRow, originalRow), update the ports below to match.
+ */
+const COLS = 9;
+const GEM_TYPES = ["ruby", "emerald", "sapphire", "topaz", "amethyst"];
+const GEM_EMOJI = { ruby: "❤️", emerald: "💚", sapphire: "💙", topaz: "💛", amethyst: "💜" };
+const STORAGE_KEY = "nm-level-editor-data-v1";
+
+/* ─── Seed data (current game stages, embedded so the editor works offline) ─ */
+const SEED = {"endless":[{"id":1,"values":[3,1,2,8,5,5,7,3,9,4,6,1,2,4,8,7,9,1,3,6,5,5,2,8,4,7,9,1]},{"id":2,"values":[4,6,7,3,2,8,5,5,1,9,3,7,6,4,8,2,1,9,5,5,3,7,4,6,8,2,9,1,3,7,5,5,4,6,8,2]},{"id":3,"values":[2,8,3,7,4,6,5,5,9,1,7,3,6,4,8,2,1,9,5,5,8,2,6,4,3,7,1,9,5,5,4,6,7,3,2,8,9,1,5,5,6,4,3,7]},{"id":4,"values":[3,9,7,3,2,4,5,7,1,2,4,2,1,5,9,8,4,2,5,5,3,6,2,7,5,7,1,6,4,1,5,9,4,9,4,3]},{"id":5,"values":[3,9,7,3,2,4,5,7,1,2,4,2,1,5,9,8,4,2,5,5,3,6,2,7,5,7,1,6,4,1,5,9,4,9,4,3,9,2,4,5,7,3,4,2,1]},{"id":6,"values":[2,7,5,3,8,1,9,4,6,5,3,9,4,6,7,2,8,1,6,4,1,8,3,9,2,7,5,5,8,2,7,5,4,6,1,9,3,7,3,2,9,8,5,5,4,6,1,4,6,9,1,8,2,7]}],"freeze":[{"id":1,"values":[3,1,2,8,5,5,7,3,9,4,6,1,2,4,8,7,9,1,3,6,5,5,2,8,4,7,9,1],"frozenIndices":[2,5,10,14,19,23]},{"id":2,"values":[4,6,7,3,2,8,5,5,1,9,3,7,6,4,8,2,1,9,5,5,3,7,4,6,8,2,9,1,3,7,5,5,4,6,8,2],"frozenIndices":[1,4,7,11,14,20,24,29,33]},{"id":3,"values":[2,8,3,7,4,6,5,5,9,1,7,3,6,4,8,2,1,9,5,5,8,2,6,4,3,7,1,9,5,5,4,6,7,3,2,8,9,1,5,5,6,4,3,7],"frozenIndices":[2,5,8,12,14,20,23,27,30,33,38]},{"id":4,"values":[3,9,7,3,2,4,5,7,1,2,4,2,1,5,9,8,4,2,5,5,3,6,2,7,5,7,1,6,4,1,5,9,4,9,4,3],"frozenIndices":[2,5,11,14,20,24,29,33]},{"id":5,"values":[3,9,7,3,2,4,5,7,1,2,4,2,1,5,9,8,4,2,5,5,3,6,2,7,5,7,1,6,4,1,5,9,4,9,4,3,9,2,4,5,7,3,4,2,1],"frozenIndices":[1,4,7,11,14,19,22,28,32,37,41]},{"id":6,"values":[2,7,5,3,8,1,9,4,6,5,3,9,4,6,7,2,8,1,6,4,1,8,3,9,2,7,5,5,8,2,7,5,4,6,1,9,3,7,3,2,9,8,5,5,4,6,1,4,6,9,1,8,2,7],"frozenIndices":[1,4,7,11,14,16,20,23,28,32,36,41,45,48,52]}],"golden":[{"id":1,"name":"First Bloom","values":[3,1,2,8,5,5,7,3,9,4,6,1,2,4,8,7,9,1,3,6,5,5,2,8,4,7,9],"gems":{"0":"ruby","4":"ruby","8":"emerald","11":"ruby","14":"emerald","19":"emerald","22":"ruby","25":"emerald"},"targets":{"ruby":3,"emerald":3}},{"id":2,"name":"Sapphire Stream","values":[4,6,7,3,2,8,5,5,1,9,3,7,6,4,8,2,1,9,5,5,3,7,4,6,8,2,9,1,3,7,5,5,4,6,8,2],"gems":{"1":"sapphire","6":"ruby","10":"sapphire","15":"ruby","18":"sapphire","23":"ruby","27":"sapphire","31":"ruby","34":"sapphire"},"targets":{"sapphire":4,"ruby":3}},{"id":3,"name":"Topaz Trove","values":[2,8,3,7,4,6,5,5,9,1,7,3,6,4,8,2,1,9,5,5,8,2,6,4,3,7,1,9,5,5,4,6,7,3,2,8],"gems":{"0":"topaz","3":"emerald","8":"topaz","12":"ruby","17":"emerald","20":"topaz","23":"ruby","28":"emerald","33":"topaz"},"targets":{"topaz":4,"emerald":2,"ruby":2}},{"id":4,"name":"Amethyst Grove","values":[3,9,7,3,2,4,5,7,1,2,4,2,1,5,9,8,4,2,5,5,3,6,2,7,5,7,1,6,4,1,5,9,4,9,4,3],"gems":{"2":"amethyst","6":"sapphire","10":"amethyst","14":"ruby","18":"amethyst","22":"sapphire","26":"amethyst","30":"ruby","33":"amethyst"},"targets":{"amethyst":4,"sapphire":2,"ruby":2}},{"id":5,"name":"Crown Jewels","values":[2,7,5,3,8,1,9,4,6,5,3,9,4,6,7,2,8,1,6,4,1,8,3,9,2,7,5,5,8,2,7,5,4,6,1,9,3,7,3,2,9,8,5,5,4],"gems":{"0":"ruby","4":"emerald","8":"sapphire","12":"topaz","16":"amethyst","20":"ruby","24":"emerald","28":"sapphire","32":"topaz","36":"amethyst","40":"ruby","44":"emerald"},"targets":{"ruby":3,"emerald":3,"sapphire":2,"topaz":2,"amethyst":2}}]};
+
+/* ─── Match validation (port of screens/GameScreen.tsx:58–123) ────────────── */
+function visibleRow(rOrig, destroyedRows) {
+  if (destroyedRows.includes(rOrig)) return -1;
+  let visible = 0;
+  for (let r = 0; r < rOrig; r++) if (!destroyedRows.includes(r)) visible++;
+  return visible;
+}
+function originalRow(rVis, destroyedRows, totalRows) {
+  let visible = 0;
+  for (let r = 0; r < totalRows; r++) {
+    if (destroyedRows.includes(r)) continue;
+    if (visible === rVis) return r;
+    visible++;
+  }
+  return -1;
+}
+function pathClearVisible(cells, r1Vis, c1, r2Vis, c2, destroyedRows) {
+  const totalRows = Math.ceil(cells.length / COLS);
+  const dr = Math.sign(r2Vis - r1Vis);
+  const dc = Math.sign(c2 - c1);
+  let rVis = r1Vis + dr;
+  let c = c1 + dc;
+  while (!(rVis === r2Vis && c === c2)) {
+    const rOrig = originalRow(rVis, destroyedRows, totalRows);
+    if (rOrig === -1) return false;
+    const idx = rOrig * COLS + c;
+    if (cells[idx] && cells[idx].active) return false;
+    rVis += dr;
+    c += dc;
+  }
+  return true;
+}
+/** Returns { valid: boolean, reason?: string } */
+function isValidPairDetail(cells, i, j) {
+  if (i === j) return { valid: false, reason: "same cell" };
+  const a = cells[i], b = cells[j];
+  if (!a || !b) return { valid: false, reason: "missing cell" };
+  if (!a.active || !b.active) return { valid: false, reason: "cell inactive" };
+  if (a.frozen || b.frozen) return { valid: false, reason: "frozen cell" };
+  if (a.value !== b.value && a.value + b.value !== 10) return { valid: false, reason: "value mismatch (not equal, not sum-10)" };
+
+  const destroyedRows = [];
+  const [lo, hi] = i < j ? [i, j] : [j, i];
+
+  // Consecutive (wrapping skips inactive cells)
+  let cursor = lo + 1;
+  while (cursor < cells.length && !cells[cursor].active) cursor++;
+  if (cursor === hi) return { valid: true, reason: "consecutive" };
+
+  const r1 = visibleRow(Math.floor(lo / COLS), destroyedRows);
+  const r2 = visibleRow(Math.floor(hi / COLS), destroyedRows);
+  if (r1 === -1 || r2 === -1) return { valid: false, reason: "row destroyed" };
+  const c1 = lo % COLS, c2 = hi % COLS;
+
+  if (Math.abs(r1 - r2) <= 1 && Math.abs(c1 - c2) <= 1) {
+    const ok = pathClearVisible(cells, r1, c1, r2, c2, destroyedRows);
+    return ok ? { valid: true, reason: "adjacent" } : { valid: false, reason: "path blocked" };
+  }
+  if (r1 === r2 || c1 === c2 || Math.abs(r1 - r2) === Math.abs(c1 - c2)) {
+    const ok = pathClearVisible(cells, r1, c1, r2, c2, destroyedRows);
+    return ok ? { valid: true, reason: "line of sight" } : { valid: false, reason: "path blocked" };
+  }
+  return { valid: false, reason: "no straight/diagonal line" };
+}
+
+/* ─── State ───────────────────────────────────────────────────────────────── */
+const state = {
+  mode: "endless",
+  selectedIdx: { endless: 0, freeze: 0, golden: 0 },
+  data: loadFromStorage(),
+  // play test
+  testEnabled: false,
+  testInactive: new Set(), // indices marked inactive for testing
+  testFirst: null,
+  testFlash: null, // { i, j, valid }
+};
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.endless && parsed.freeze && parsed.golden) return parsed;
+    }
+  } catch (e) {}
+  return JSON.parse(JSON.stringify(SEED));
+}
+function persist() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+    setStatus("Saved locally");
+  } catch (e) {
+    setStatus("⚠ couldn't save locally");
+  }
+}
+function setStatus(msg) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  clearTimeout(setStatus._t);
+  setStatus._t = setTimeout(() => { el.textContent = ""; }, 2500);
+}
+
+/* ─── Stage helpers ───────────────────────────────────────────────────────── */
+function getStages() { return state.data[state.mode]; }
+function getCurrent() {
+  const stages = getStages();
+  return stages[state.selectedIdx[state.mode]];
+}
+function renumber() {
+  getStages().forEach((s, i) => s.id = i + 1);
+}
+function makeEmptyStage(mode) {
+  if (mode === "endless") return { id: 0, values: new Array(27).fill(0) };
+  if (mode === "freeze")  return { id: 0, values: new Array(27).fill(0), frozenIndices: [] };
+  if (mode === "golden")  return { id: 0, name: "New Stage", values: new Array(27).fill(0), gems: {}, targets: {} };
+}
+
+/* Build editor cells from current stage (for play-test logic). value 0 = empty (treated as inactive). */
+function buildCells() {
+  const s = getCurrent();
+  if (!s) return [];
+  return s.values.map((v, i) => ({
+    id: i,
+    value: v,
+    active: v > 0 && !state.testInactive.has(i),
+    frozen: state.mode === "freeze" && s.frozenIndices.includes(i),
+  }));
+}
+
+/* ─── Render ──────────────────────────────────────────────────────────────── */
+function render() {
+  renderTabs();
+  renderStageList();
+  renderGrid();
+  renderMeta();
+  renderGridInfo();
+  renderTestButton();
+}
+
+function renderTabs() {
+  document.querySelectorAll(".tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.mode === state.mode);
+  });
+}
+
+function renderStageList() {
+  const list = document.getElementById("stagelist");
+  list.innerHTML = "";
+  const stages = getStages();
+  const sel = state.selectedIdx[state.mode];
+  stages.forEach((s, i) => {
+    const row = document.createElement("div");
+    row.className = "stage-row" + (i === sel ? " active" : "");
+    const cellCount = s.values.filter(v => v > 0).length;
+    const totalSlots = s.values.length;
+    let metaText = `${cellCount}/${totalSlots} cells`;
+    if (state.mode === "freeze") metaText += ` · ${s.frozenIndices.length} frozen`;
+    if (state.mode === "golden") metaText += ` · ${Object.keys(s.gems).length} gems`;
+    row.innerHTML = `<span class="num">#${s.id}</span><span class="meta">${metaText}</span>`;
+    row.addEventListener("click", () => selectStage(i));
+    list.appendChild(row);
+  });
+  if (stages.length === 0) {
+    list.innerHTML = '<div class="empty-state">No stages yet. Click + New.</div>';
+  }
+}
+
+function renderGrid() {
+  const grid = document.getElementById("grid");
+  const s = getCurrent();
+  if (!s) {
+    grid.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1;">No stage selected.</div>';
+    return;
+  }
+  grid.innerHTML = "";
+  const flash = state.testFlash;
+  s.values.forEach((v, i) => {
+    const cell = document.createElement("div");
+    const isFrozen = state.mode === "freeze" && s.frozenIndices.includes(i);
+    const isEmpty = v === 0;
+    const inactive = state.testEnabled && state.testInactive.has(i);
+    cell.className = "cell";
+    if (isEmpty) cell.classList.add("empty");
+    if (isFrozen && !isEmpty) cell.classList.add("frozen");
+    if (inactive) cell.classList.add("inactive");
+    if (state.testEnabled && state.testFirst === i) cell.classList.add("test-first");
+    if (flash && (flash.i === i || flash.j === i)) {
+      cell.classList.add(flash.valid ? "test-good" : "test-bad");
+    }
+    cell.dataset.idx = String(i);
+    if (!isEmpty) cell.textContent = String(v);
+
+    if (state.mode === "freeze" && isFrozen && !isEmpty) {
+      const mark = document.createElement("span");
+      mark.className = "freeze-mark";
+      mark.textContent = "❄";
+      cell.appendChild(mark);
+    }
+    if (state.mode === "golden" && s.gems[i]) {
+      const g = document.createElement("span");
+      g.className = "gem-badge";
+      g.textContent = GEM_EMOJI[s.gems[i]];
+      cell.appendChild(g);
+    }
+    const idxBadge = document.createElement("span");
+    idxBadge.className = "idx-badge";
+    idxBadge.textContent = String(i);
+    cell.appendChild(idxBadge);
+
+    cell.addEventListener("click", (ev) => handleCellClick(ev, i));
+    cell.addEventListener("contextmenu", (ev) => { ev.preventDefault(); openPicker(ev, i); });
+    grid.appendChild(cell);
+  });
+}
+
+function renderGridInfo() {
+  const s = getCurrent();
+  const info = document.getElementById("grid-info");
+  if (!s) { info.textContent = ""; return; }
+  const total = s.values.length;
+  const filled = s.values.filter(v => v > 0).length;
+  const rows = Math.ceil(total / COLS);
+  info.textContent = `${filled} active / ${total} slots · ${rows} rows · click cycles 1–9, right-click opens picker, shift-click in Freeze/Golden = overlay toggle`;
+}
+
+function renderMeta() {
+  const wrap = document.getElementById("meta-fields");
+  const s = getCurrent();
+  if (!s) { wrap.innerHTML = '<div class="empty-state">No stage selected.</div>'; return; }
+  let html = `
+    <div class="meta-field">
+      <label>ID</label>
+      <input type="text" value="${s.id}" disabled />
+      <div class="meta-hint">IDs are auto-renumbered from 1.</div>
+    </div>
+  `;
+  if (state.mode === "golden") {
+    html += `
+      <div class="meta-field">
+        <label>Name</label>
+        <input type="text" id="meta-name" value="${escapeHtml(s.name || "")}" />
+      </div>
+      <div class="meta-field">
+        <label>Gem targets</label>
+        ${GEM_TYPES.map(g => `
+          <div class="gem-target-row">
+            <span>${GEM_EMOJI[g]}</span>
+            <span class="gem-label">${g}</span>
+            <input type="number" min="0" data-gem="${g}" class="meta-target" value="${s.targets[g] || 0}" />
+          </div>
+        `).join("")}
+        <div class="meta-hint">0 = no target for that gem. Should be ≤ count of that gem on the board.</div>
+      </div>
+    `;
+  }
+  if (state.mode === "freeze") {
+    html += `<div class="meta-field"><label>Frozen cells</label><div>${s.frozenIndices.length} on board</div><div class="meta-hint">Shift-click a cell to toggle frozen.</div></div>`;
+  }
+  if (state.mode === "endless") {
+    html += `<div class="meta-hint">Endless levels are unlocked by clearing the previous stage. Keep ID order coherent.</div>`;
+  }
+  wrap.innerHTML = html;
+
+  const nameInput = document.getElementById("meta-name");
+  if (nameInput) {
+    nameInput.addEventListener("input", () => {
+      getCurrent().name = nameInput.value;
+      persist();
+      renderStageList();
+    });
+  }
+  document.querySelectorAll(".meta-target").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const stage = getCurrent();
+      const n = parseInt(inp.value, 10);
+      if (!n || n <= 0) delete stage.targets[inp.dataset.gem];
+      else stage.targets[inp.dataset.gem] = n;
+      persist();
+    });
+  });
+}
+
+function renderTestButton() {
+  const btn = document.getElementById("test-toggle");
+  btn.classList.toggle("active", state.testEnabled);
+  btn.textContent = state.testEnabled ? "Exit play-test" : "Enable play-test";
+  document.getElementById("test-result").textContent = state.testEnabled
+    ? "Click two active cells to test a pair. Valid pairs become inactive (simulating a match)."
+    : "Click two active cells to test a pair.";
+  document.getElementById("test-result").className = "result";
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+}
+
+/* ─── Interactions ────────────────────────────────────────────────────────── */
+function selectStage(i) {
+  state.selectedIdx[state.mode] = i;
+  resetPlayTest();
+  render();
+}
+
+function handleCellClick(ev, i) {
+  const s = getCurrent();
+  if (!s) return;
+
+  if (state.testEnabled) {
+    handleTestClick(i);
+    return;
+  }
+
+  // Shift-click in freeze/golden = overlay action
+  if (ev.shiftKey) {
+    if (state.mode === "freeze") {
+      toggleFrozen(i);
+      return;
+    }
+    if (state.mode === "golden") {
+      openPicker(ev, i, true);
+      return;
+    }
+  }
+
+  // Cycle 0→1→2…→9→0
+  const v = s.values[i];
+  s.values[i] = (v + 1) % 10;
+  // If we just emptied a cell that has overlays, clean them up
+  if (s.values[i] === 0) {
+    if (state.mode === "freeze") {
+      s.frozenIndices = s.frozenIndices.filter(x => x !== i);
+    }
+    if (state.mode === "golden") {
+      delete s.gems[i];
+    }
+  }
+  persist();
+  render();
+}
+
+function toggleFrozen(i) {
+  const s = getCurrent();
+  if (s.values[i] === 0) { setStatus("Set a number before freezing"); return; }
+  const set = new Set(s.frozenIndices);
+  if (set.has(i)) set.delete(i); else set.add(i);
+  s.frozenIndices = Array.from(set).sort((a, b) => a - b);
+  persist();
+  render();
+}
+
+function openPicker(ev, idx, gemMode) {
+  closePicker();
+  const host = document.getElementById("picker-host");
+  const picker = document.createElement("div");
+  picker.className = "picker";
+  const s = getCurrent();
+  // Number buttons
+  for (let n = 1; n <= 9; n++) {
+    const b = document.createElement("button");
+    b.textContent = String(n);
+    b.addEventListener("click", () => {
+      s.values[idx] = n;
+      persist();
+      render();
+      closePicker();
+    });
+    picker.appendChild(b);
+  }
+  const xb = document.createElement("button");
+  xb.className = "x";
+  xb.textContent = "×";
+  xb.title = "Clear";
+  xb.addEventListener("click", () => {
+    s.values[idx] = 0;
+    if (state.mode === "freeze") s.frozenIndices = s.frozenIndices.filter(x => x !== idx);
+    if (state.mode === "golden") delete s.gems[idx];
+    persist();
+    render();
+    closePicker();
+  });
+  picker.appendChild(xb);
+
+  // Gem row for golden mode
+  if (state.mode === "golden") {
+    const row = document.createElement("div");
+    row.className = "gem-row";
+    const noneBtn = document.createElement("button");
+    noneBtn.textContent = "no gem";
+    noneBtn.addEventListener("click", () => {
+      delete s.gems[idx];
+      persist(); render(); closePicker();
+    });
+    row.appendChild(noneBtn);
+    GEM_TYPES.forEach(g => {
+      const b = document.createElement("button");
+      b.textContent = GEM_EMOJI[g];
+      b.title = g;
+      b.addEventListener("click", () => {
+        if (s.values[idx] === 0) { setStatus("Set a number before assigning a gem"); closePicker(); return; }
+        s.gems[idx] = g;
+        persist(); render(); closePicker();
+      });
+      row.appendChild(b);
+    });
+    picker.appendChild(row);
+  }
+
+  // Position near click
+  const x = ev.clientX, y = ev.clientY;
+  picker.style.left = Math.min(x, window.innerWidth - 180) + "px";
+  picker.style.top = Math.min(y, window.innerHeight - 160) + "px";
+  host.appendChild(picker);
+  setTimeout(() => document.addEventListener("click", outsideClickClose, { once: true }), 0);
+}
+function outsideClickClose(ev) {
+  if (ev.target.closest(".picker")) {
+    document.addEventListener("click", outsideClickClose, { once: true });
+    return;
+  }
+  closePicker();
+}
+function closePicker() {
+  document.getElementById("picker-host").innerHTML = "";
+}
+
+/* ─── Play test ────────────────────────────────────────────────────────────── */
+function handleTestClick(i) {
+  const s = getCurrent();
+  if (!s) return;
+  if (s.values[i] === 0) { setStatus("Empty cell"); return; }
+  if (state.testInactive.has(i)) { setStatus("Cell already matched"); return; }
+
+  if (state.testFirst === null) {
+    state.testFirst = i;
+    state.testFlash = null;
+    render();
+    document.getElementById("test-result").textContent = `First pick: index ${i} (value ${s.values[i]})`;
+    document.getElementById("test-result").className = "result";
+    return;
+  }
+  if (state.testFirst === i) {
+    state.testFirst = null;
+    render();
+    document.getElementById("test-result").textContent = "Deselected.";
+    return;
+  }
+
+  const cells = buildCells();
+  const result = isValidPairDetail(cells, state.testFirst, i);
+  state.testFlash = { i: state.testFirst, j: i, valid: result.valid };
+  const resEl = document.getElementById("test-result");
+  if (result.valid) {
+    resEl.textContent = `✓ Valid (${result.reason}) — ${state.testFirst} ↔ ${i}. Cells cleared.`;
+    resEl.className = "result good";
+    state.testInactive.add(state.testFirst);
+    state.testInactive.add(i);
+    state.testFirst = null;
+    setTimeout(() => { state.testFlash = null; render(); }, 600);
+  } else {
+    resEl.textContent = `✗ Invalid: ${result.reason} — ${state.testFirst} ↔ ${i}`;
+    resEl.className = "result bad";
+    state.testFirst = null;
+    setTimeout(() => { state.testFlash = null; render(); }, 800);
+  }
+  render();
+}
+
+function resetPlayTest() {
+  state.testFirst = null;
+  state.testInactive.clear();
+  state.testFlash = null;
+}
+
+/* ─── Stage CRUD ──────────────────────────────────────────────────────────── */
+function newStage() {
+  const stages = getStages();
+  stages.push(makeEmptyStage(state.mode));
+  renumber();
+  state.selectedIdx[state.mode] = stages.length - 1;
+  resetPlayTest();
+  persist();
+  render();
+}
+function dupStage() {
+  const stages = getStages();
+  const cur = getCurrent();
+  if (!cur) return;
+  const copy = JSON.parse(JSON.stringify(cur));
+  if ("name" in copy) copy.name = copy.name + " (copy)";
+  stages.splice(state.selectedIdx[state.mode] + 1, 0, copy);
+  renumber();
+  state.selectedIdx[state.mode] += 1;
+  resetPlayTest();
+  persist();
+  render();
+}
+function delStage() {
+  const stages = getStages();
+  if (stages.length === 0) return;
+  if (!confirm("Delete stage #" + (state.selectedIdx[state.mode] + 1) + "?")) return;
+  stages.splice(state.selectedIdx[state.mode], 1);
+  renumber();
+  if (state.selectedIdx[state.mode] >= stages.length) {
+    state.selectedIdx[state.mode] = Math.max(0, stages.length - 1);
+  }
+  resetPlayTest();
+  persist();
+  render();
+}
+function moveStage(dir) {
+  const stages = getStages();
+  const i = state.selectedIdx[state.mode];
+  const j = i + dir;
+  if (j < 0 || j >= stages.length) return;
+  [stages[i], stages[j]] = [stages[j], stages[i]];
+  renumber();
+  state.selectedIdx[state.mode] = j;
+  persist();
+  render();
+}
+function addRow() {
+  const s = getCurrent();
+  if (!s) return;
+  for (let k = 0; k < COLS; k++) s.values.push(0);
+  persist();
+  render();
+}
+function removeRow() {
+  const s = getCurrent();
+  if (!s) return;
+  if (s.values.length <= COLS) { setStatus("Can't remove last row"); return; }
+  const start = s.values.length - COLS;
+  // strip any frozen/gem refs in the removed indices
+  if (state.mode === "freeze") {
+    s.frozenIndices = s.frozenIndices.filter(x => x < start);
+  }
+  if (state.mode === "golden") {
+    for (const k of Object.keys(s.gems)) {
+      if (Number(k) >= start) delete s.gems[k];
+    }
+  }
+  s.values.length = start;
+  persist();
+  render();
+}
+
+/* ─── Procedural generation (reverse-construction) ────────────────────────────
+ * Builds a guaranteed-solvable board by placing pairs forward. Player solves
+ * in reverse: when pair Pi is matched, only P1..Pi-1 cells are still on the
+ * board — which matches the partial state at insertion time. So if each pair
+ * is a legal match in the partial board, the player can clear the whole stage
+ * in reverse insertion order.
+ */
+function pickPairValue() {
+  // 50/50 identical vs sum-to-10
+  if (Math.random() < 0.5) {
+    const n = 1 + Math.floor(Math.random() * 9);
+    return [n, n];
+  }
+  const a = 1 + Math.floor(Math.random() * 9);
+  return [a, 10 - a];
+}
+
+/** Returns true if (a, b) is a legal match geometry in `values` (value > 0 = active). */
+function isLegalGeometry(values, a, b) {
+  if (a === b) return false;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  const cells = values.map((v) => ({ value: v, active: v > 0, frozen: false }));
+
+  // Consecutive: skip inactive cells from lo+1 forward.
+  let cursor = lo + 1;
+  while (cursor < cells.length && !cells[cursor].active) cursor++;
+  if (cursor === hi) return true;
+
+  const r1 = Math.floor(lo / COLS);
+  const r2 = Math.floor(hi / COLS);
+  const c1 = lo % COLS;
+  const c2 = hi % COLS;
+  const destroyedRows = [];
+
+  if (Math.abs(r1 - r2) <= 1 && Math.abs(c1 - c2) <= 1) {
+    return pathClearVisible(cells, r1, c1, r2, c2, destroyedRows);
+  }
+  if (r1 === r2 || c1 === c2 || Math.abs(r1 - r2) === Math.abs(c1 - c2)) {
+    return pathClearVisible(cells, r1, c1, r2, c2, destroyedRows);
+  }
+  return false;
+}
+
+/** Single attempt — returns { values, placed }. */
+function generateOnce(n) {
+  const values = new Array(n).fill(0);
+  const target = n - (n % 2);
+  let placed = 0;
+
+  while (placed < target) {
+    const empty = [];
+    for (let i = 0; i < n; i++) if (values[i] === 0) empty.push(i);
+    if (empty.length < 2) break;
+
+    // Find all legal candidate pairs in current partial board.
+    const candidates = [];
+    for (let i = 0; i < empty.length; i++) {
+      for (let j = i + 1; j < empty.length; j++) {
+        if (isLegalGeometry(values, empty[i], empty[j])) candidates.push([empty[i], empty[j]]);
+      }
+    }
+    if (candidates.length === 0) break;
+
+    const [a, b] = candidates[Math.floor(Math.random() * candidates.length)];
+    const [pa, pb] = pickPairValue();
+    values[a] = pa;
+    values[b] = pb;
+    placed += 2;
+  }
+
+  return { values, placed };
+}
+
+function generateLevel() {
+  const s = getCurrent();
+  if (!s) return;
+  const n = s.values.length;
+  if (n < 2) { setStatus("Board too small to generate"); return; }
+
+  // Best-of-5: pick the attempt that placed the most cells.
+  let best = { values: null, placed: -1 };
+  for (let k = 0; k < 5; k++) {
+    const r = generateOnce(n);
+    if (r.placed > best.placed) best = r;
+    if (best.placed === n - (n % 2)) break;
+  }
+
+  s.values = best.values;
+  // Clean overlays at indices that ended up empty.
+  if (state.mode === "freeze") {
+    s.frozenIndices = s.frozenIndices.filter(i => s.values[i] > 0);
+  }
+  if (state.mode === "golden") {
+    for (const k of Object.keys(s.gems)) {
+      if (!s.values[Number(k)]) delete s.gems[k];
+    }
+  }
+
+  resetPlayTest();
+  persist();
+  render();
+
+  const target = n - (n % 2);
+  if (best.placed === target) {
+    setStatus(`Generated ${best.placed}/${n} cells${n % 2 ? " (1 cell left empty due to odd count)" : ""}`);
+  } else {
+    setStatus(`Generated ${best.placed}/${target} cells — got stuck early, click Generate again to retry`);
+  }
+}
+
+/* ─── Import / Export ─────────────────────────────────────────────────────── */
+function exportJson() {
+  // Clean: drop empty trailing cells? No — keep board size intact.
+  // Strip targets keys with 0.
+  const out = JSON.parse(JSON.stringify(state.data));
+  for (const g of out.golden) {
+    for (const k of Object.keys(g.targets)) if (!g.targets[k]) delete g.targets[k];
+  }
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "levels.json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  setStatus("Exported levels.json");
+}
+function importJson(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      if (!parsed.endless || !parsed.freeze || !parsed.golden) throw new Error("Missing required mode keys");
+      state.data = parsed;
+      state.selectedIdx = { endless: 0, freeze: 0, golden: 0 };
+      resetPlayTest();
+      persist();
+      render();
+      setStatus("Imported " + file.name);
+    } catch (e) {
+      alert("Could not import: " + e.message);
+    }
+  };
+  reader.readAsText(file);
+}
+function resetToSeed() {
+  if (!confirm("Reset to seed data (the levels currently in the game)? This wipes your current edits.")) return;
+  state.data = JSON.parse(JSON.stringify(SEED));
+  state.selectedIdx = { endless: 0, freeze: 0, golden: 0 };
+  resetPlayTest();
+  persist();
+  render();
+}
+
+/* ─── Wiring ──────────────────────────────────────────────────────────────── */
+document.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => {
+    state.mode = t.dataset.mode;
+    resetPlayTest();
+    render();
+  });
+});
+document.getElementById("new-stage").addEventListener("click", newStage);
+document.getElementById("dup-stage").addEventListener("click", dupStage);
+document.getElementById("del-stage").addEventListener("click", delStage);
+document.getElementById("up-stage").addEventListener("click", () => moveStage(-1));
+document.getElementById("down-stage").addEventListener("click", () => moveStage(1));
+document.getElementById("add-row").addEventListener("click", addRow);
+document.getElementById("remove-row").addEventListener("click", removeRow);
+document.getElementById("generate").addEventListener("click", () => {
+  const s = getCurrent();
+  if (!s) return;
+  const hasData = s.values.some(v => v > 0);
+  if (hasData && !confirm("Overwrite current values with a generated board?")) return;
+  generateLevel();
+});
+document.getElementById("export-btn").addEventListener("click", exportJson);
+document.getElementById("reset-btn").addEventListener("click", resetToSeed);
+document.getElementById("file-input").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (f) importJson(f);
+  e.target.value = "";
+});
+document.getElementById("test-toggle").addEventListener("click", () => {
+  state.testEnabled = !state.testEnabled;
+  resetPlayTest();
+  render();
+});
+document.getElementById("test-reset").addEventListener("click", () => {
+  resetPlayTest();
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
