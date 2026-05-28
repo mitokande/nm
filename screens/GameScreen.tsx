@@ -886,6 +886,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       // Stage 4 leaves leftover cells after Add Row, so force completion here
       // instead of waiting for the rem===0 effect.
       setStageComplete(true);
+      onCrownsEarned(1);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       return;
