@@ -1,10 +1,11 @@
+// Garden meta: restore-the-garden progression
 import React, { useState, useEffect, useRef } from "react";
 import { Animated, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
 import GameScreen from "./screens/GameScreen";
 import SplashScreen from "./screens/SplashScreen";
-import { GardenState, defaultGardenState, normalizeGardenState } from "./screens/gardenData";
+import { GardenState, defaultGardenState, normalizeGardenState, investCrowns } from "./screens/gardenData";
 
 type Screen = "menu" | "game";
 export type GameMode = "endless" | "golden" | "timeattack" | "freeze" | "tutorial";
@@ -47,12 +48,12 @@ export default function App() {
     if (loaded) AsyncStorage.setItem("garden_state", JSON.stringify(gardenState));
   }, [gardenState, loaded]);
 
-  function handleGardenChange(next: GardenState) {
-    setGardenState(next);
-  }
-
-  function handleSpendCrowns(amount: number) {
-    setCrowns((c) => Math.max(0, c - amount));
+  function handleInvestGarden() {
+    const result = investCrowns(gardenState, crowns);
+    if (result.spent > 0) {
+      setCrowns((c) => Math.max(0, c - result.spent));
+      setGardenState(result.next);
+    }
   }
 
   function navigateTo(newScreen: Screen, stage = 1, m: GameMode = "endless") {
@@ -100,8 +101,7 @@ export default function App() {
         <MainMenu
           crowns={crowns}
           gardenState={gardenState}
-          onSpendCrowns={handleSpendCrowns}
-          onGardenChange={handleGardenChange}
+          onInvestGarden={handleInvestGarden}
           onPlay={(stage, m) => navigateTo("game", stage, m)}
           onResetTutorial={handleResetTutorial}
         />

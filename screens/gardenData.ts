@@ -1,126 +1,87 @@
 // ─── Garden meta system ─────────────────────────────────────────────────────
-// A persistent "grow a garden" meta layer. Crowns (earned 1-per-level) are the
-// currency. Players plant seeds into plots, water them through growth stages
-// (seed -> sprout -> bloom), and new plant types unlock as total blooms grow.
+// A persistent "restore the garden" meta layer. Crowns (earned 1-per-level) are
+// invested to restore overgrown garden areas one at a time. Each restored area
+// advances the illustrated scene to its next, more beautiful stage.
 
-export const PLOT_COUNT = 6;
-
-export type GrowthStage = 0 | 1 | 2; // 0 = seed, 1 = sprout, 2 = bloom
-
-export interface PlantType {
+export interface GardenArea {
   id: string;
   name: string;
-  /** Emoji per growth stage: [seed, sprout, bloom]. */
-  stages: [string, string, string];
-  /** Crowns to plant a seed. */
+  /** Crowns required to fully restore this area. */
   cost: number;
-  /** Crowns to advance one growth stage. */
-  waterCost: number;
-  /** Total blooms required before this plant is available in the shop. */
-  unlockAtBlooms: number;
+  /** Emoji used as the area's icon in the progress card. */
+  icon: string;
 }
 
-export const PLANTS: PlantType[] = [
-  { id: "daisy",     name: "Daisy",     stages: ["🌱", "🌿", "🌼"], cost: 2,  waterCost: 1, unlockAtBlooms: 0 },
-  { id: "tulip",     name: "Tulip",     stages: ["🌱", "🌿", "🌷"], cost: 3,  waterCost: 1, unlockAtBlooms: 2 },
-  { id: "sunflower", name: "Sunflower", stages: ["🌱", "🌿", "🌻"], cost: 4,  waterCost: 2, unlockAtBlooms: 4 },
-  { id: "rose",      name: "Rose",      stages: ["🌱", "🌿", "🌹"], cost: 6,  waterCost: 2, unlockAtBlooms: 7 },
-  { id: "lotus",     name: "Lotus",     stages: ["🌱", "🌿", "🪷"], cost: 8,  waterCost: 3, unlockAtBlooms: 11 },
-  { id: "cherry",    name: "Cherry",    stages: ["🌱", "🌿", "🌸"], cost: 10, waterCost: 3, unlockAtBlooms: 16 },
+// Order matters: areas are restored top-to-bottom. The number of areas equals
+// the number of "restoration steps"; there is one scene image per step plus the
+// initial barren scene (so total scene images = GARDEN_AREAS.length + 1).
+export const GARDEN_AREAS: GardenArea[] = [
+  { id: "roses",  name: "Rose Garden", cost: 5,  icon: "🌹" },
+  { id: "beds",   name: "Flower Beds", cost: 8,  icon: "🌸" },
+  { id: "pond",   name: "Lily Pond",   cost: 12, icon: "🪷" },
 ];
 
-export const PLANT_BY_ID: Record<string, PlantType> = PLANTS.reduce(
-  (acc, p) => { acc[p.id] = p; return acc; },
-  {} as Record<string, PlantType>
-);
-
-export interface Plot {
-  plantId: string | null;
-  stage: GrowthStage;
-}
+export const TOTAL_AREAS = GARDEN_AREAS.length;
 
 export interface GardenState {
-  plots: Plot[];
-  totalBlooms: number;
+  /** Number of areas fully restored (0..TOTAL_AREAS). */
+  restored: number;
+  /** Crowns invested toward the current (not-yet-restored) area. */
+  invested: number;
 }
 
 export function defaultGardenState(): GardenState {
-  return {
-    plots: Array.from({ length: PLOT_COUNT }, () => ({ plantId: null, stage: 0 as GrowthStage })),
-    totalBlooms: 0,
-  };
+  return { restored: 0, invested: 0 };
 }
 
-/** Tolerant loader: backfills missing fields so older/partial saves don't crash. */
+/** Tolerant loader so older/partial saves never crash. */
 export function normalizeGardenState(raw: any): GardenState {
-  const base = defaultGardenState();
-  if (!raw || typeof raw !== "object") return base;
-  const plots: Plot[] = base.plots.map((fallback, i) => {
-    const p = Array.isArray(raw.plots) ? raw.plots[i] : undefined;
-    if (!p || typeof p !== "object") return fallback;
-    const plantId = typeof p.plantId === "string" && PLANT_BY_ID[p.plantId] ? p.plantId : null;
-    const stageNum = typeof p.stage === "number" ? p.stage : 0;
-    const stage = (plantId ? Math.max(0, Math.min(2, stageNum)) : 0) as GrowthStage;
-    return { plantId, stage };
-  });
-  const totalBlooms = typeof raw.totalBlooms === "number" && raw.totalBlooms >= 0 ? raw.totalBlooms : 0;
-  return { plots, totalBlooms };
+  if (!raw || typeof raw !== "object") return defaultGardenState();
+  let restored = typeof raw.restored === "number" ? Math.floor(raw.restored) : 0;
+  restored = Math.max(0, Math.min(TOTAL_AREAS, restored));
+  let invested = typeof raw.invested === "number" ? Math.floor(raw.invested) : 0;
+  if (invested < 0) invested = 0;
+  const currentCost = GARDEN_AREAS[restored]?.cost ?? 0;
+  if (restored >= TOTAL_AREAS) invested = 0;
+  else if (invested >= currentCost) invested = Math.max(0, currentCost - 1);
+  return { restored, invested };
 }
 
-export function unlockedPlants(totalBlooms: number): PlantType[] {
-  return PLANTS.filter((p) => totalBlooms >= p.unlockAtBlooms);
+export function isFullyRestored(state: GardenState): boolean {
+  return state.restored >= TOTAL_AREAS;
 }
 
-/** The next plant type still locked, if any (used to tease progression). */
-export function nextLockedPlant(totalBlooms: number): PlantType | null {
-  return PLANTS.find((p) => totalBlooms < p.unlockAtBlooms) ?? null;
+/** The area currently being restored, or null when the garden is complete. */
+export function currentArea(state: GardenState): GardenArea | null {
+  return GARDEN_AREAS[state.restored] ?? null;
 }
 
-export function isPlotEmpty(plot: Plot): boolean {
-  return plot.plantId === null;
+/** Which scene image to show (0 = barren, TOTAL_AREAS = fully restored). */
+export function stageImageIndex(state: GardenState): number {
+  return Math.min(state.restored, TOTAL_AREAS);
 }
 
-export function isBloomed(plot: Plot): boolean {
-  return plot.plantId !== null && plot.stage >= 2;
-}
-
-/**
- * Plant a seed into an empty plot. Pure: returns the next state, or null if the
- * action is invalid (plot occupied, unknown plant). Cost handling is the
- * caller's responsibility.
- */
-export function plantSeed(state: GardenState, plotIndex: number, plantId: string): GardenState | null {
-  const plot = state.plots[plotIndex];
-  if (!plot || !isPlotEmpty(plot) || !PLANT_BY_ID[plantId]) return null;
-  const plots = state.plots.slice();
-  plots[plotIndex] = { plantId, stage: 0 };
-  return { ...state, plots };
+export interface InvestResult {
+  next: GardenState;
+  spent: number;
+  justRestored: boolean;
 }
 
 /**
- * Water a plot, advancing it one growth stage. Pure: returns the next state, or
- * null if invalid (empty plot or already bloomed). Increments totalBlooms when
- * a plant reaches bloom.
+ * Invest up to `available` crowns into the current area. Pure. Spends only what
+ * is needed to (at most) finish the current area; leftover crowns are left in
+ * the player's balance. Returns the new state, crowns spent, and whether an
+ * area was just fully restored.
  */
-export function waterPlot(state: GardenState, plotIndex: number): GardenState | null {
-  const plot = state.plots[plotIndex];
-  if (!plot || isPlotEmpty(plot) || plot.stage >= 2) return null;
-  const nextStage = (plot.stage + 1) as GrowthStage;
-  const plots = state.plots.slice();
-  plots[plotIndex] = { plantId: plot.plantId, stage: nextStage };
-  const justBloomed = nextStage >= 2;
-  return {
-    ...state,
-    plots,
-    totalBlooms: state.totalBlooms + (justBloomed ? 1 : 0),
-  };
-}
-
-/** Clear a bloomed plot back to soil so it can be replanted. */
-export function clearPlot(state: GardenState, plotIndex: number): GardenState | null {
-  const plot = state.plots[plotIndex];
-  if (!plot || isPlotEmpty(plot)) return null;
-  const plots = state.plots.slice();
-  plots[plotIndex] = { plantId: null, stage: 0 };
-  return { ...state, plots };
+export function investCrowns(state: GardenState, available: number): InvestResult {
+  const area = currentArea(state);
+  if (!area || available <= 0) return { next: state, spent: 0, justRestored: false };
+  const need = area.cost - state.invested;
+  const spend = Math.min(need, Math.floor(available));
+  if (spend <= 0) return { next: state, spent: 0, justRestored: false };
+  const investedAfter = state.invested + spend;
+  if (investedAfter >= area.cost) {
+    return { next: { restored: state.restored + 1, invested: 0 }, spent: spend, justRestored: true };
+  }
+  return { next: { restored: state.restored, invested: investedAfter }, spent: spend, justRestored: false };
 }

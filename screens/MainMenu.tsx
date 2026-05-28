@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Animated, StatusBar, Platform, ScrollView,
+  Animated, StatusBar, Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { GameMode } from "../App";
@@ -30,14 +30,14 @@ const C = {
 interface Props {
   crowns: number;
   gardenState: GardenState;
-  onSpendCrowns: (amount: number) => void;
-  onGardenChange: (next: GardenState) => void;
+  /** Invest the player's crowns into the current garden area. */
+  onInvestGarden: () => void;
   onPlay: (stage: number, mode: GameMode) => void;
   onResetTutorial?: () => void;
 }
 
 export default function MainMenu({
-  crowns, gardenState, onSpendCrowns, onGardenChange, onPlay, onResetTutorial,
+  crowns, gardenState, onInvestGarden, onPlay, onResetTutorial,
 }: Props) {
   const [endlessStage, setEndlessStage] = useState(1);
   const crownBump = useRef(new Animated.Value(1)).current;
@@ -77,7 +77,7 @@ export default function MainMenu({
 
       {/* Crown badge — fixed top right */}
       <View style={ms.topBar}>
-        <Text style={ms.crownEmoji}>♛</Text>
+        <Text style={ms.crownEmoji}>👑</Text>
         <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>{crowns}</Animated.Text>
       </View>
 
@@ -91,26 +91,12 @@ export default function MainMenu({
       <Animated.View
         style={[ms.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={ms.scrollBody}
-        >
-          {/* Title */}
-          <View style={ms.titleBlock}>
-            <Text style={ms.title}>
-              Number Match<Text style={ms.titleDot}>.</Text>
-            </Text>
-            <Text style={ms.titleSub}>grow your garden, one match at a time</Text>
-          </View>
-
-          {/* Garden meta — centerpiece */}
-          <Garden
-            crowns={crowns}
-            gardenState={gardenState}
-            onSpend={onSpendCrowns}
-            onGardenChange={onGardenChange}
-          />
-        </ScrollView>
+        {/* Garden meta — the main part of the screen */}
+        <Garden
+          crowns={crowns}
+          gardenState={gardenState}
+          onInvest={onInvestGarden}
+        />
 
         {/* Primary CTA — pinned below */}
         <TouchableOpacity
@@ -138,24 +124,34 @@ const ms = StyleSheet.create({
 
   topBar: {
     position: "absolute",
-    top: Platform.OS === "android" ? 36 : 52,
+    top: Platform.OS === "android" ? 76 : 92,
     right: 22,
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 7,
+    backgroundColor: C.white,
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "rgba(26,29,46,0.08)",
+    shadowColor: "rgba(26,29,46,1)",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
     zIndex: 10,
   },
-  crownEmoji: { fontSize: 13, color: C.crown },
-  crownCount: { fontSize: 14, fontWeight: "700", color: C.ink },
+  crownEmoji: { fontSize: 17 },
+  crownCount: { fontSize: 16, fontWeight: "900", color: C.ink },
 
   content: {
     flex: 1,
-    paddingTop: Platform.OS === "android" ? 80 : 96,
+    paddingTop: Platform.OS === "android" ? 72 : 88,
     paddingHorizontal: 22,
     paddingBottom: 36,
     gap: 16,
   },
-  scrollBody: { gap: 20, paddingBottom: 16 },
 
   titleBlock: { alignItems: "flex-start", gap: 5 },
   title: {

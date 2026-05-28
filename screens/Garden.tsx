@@ -1,363 +1,361 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  View, Text, TouchableOpacity, StyleSheet, Modal, Animated, Dimensions,
+  View, Text, TouchableOpacity, StyleSheet, Animated, Image,
 } from "react-native";
 import {
-  GardenState, PLANT_BY_ID, PLOT_COUNT, Plot,
-  unlockedPlants, nextLockedPlant, isPlotEmpty, isBloomed,
-  plantSeed, waterPlot, clearPlot,
+  GardenState, GARDEN_AREAS, TOTAL_AREAS,
+  currentArea, isFullyRestored, stageImageIndex,
 } from "./gardenData";
 
-const { width: SW } = Dimensions.get("window");
-const COLS = 3;
-const PLOT_GAP = 10;
-const BED_PAD = 14;
-const PLOT_SIZE = Math.floor((SW - 44 - BED_PAD * 2 - PLOT_GAP * (COLS - 1)) / COLS);
+// Scene images, barren (0) -> fully restored (TOTAL_AREAS).
+const STAGE_IMAGES = [
+  require("../assets/garden/stage0.png"),
+  require("../assets/garden/stage1.png"),
+  require("../assets/garden/stage2.png"),
+  require("../assets/garden/stage3.png"),
+];
 
 const C = {
   white: "#fbfaf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.48)",
+  ink: "#2a2118",
+  inkSoft: "rgba(42,33,24,0.5)",
   ghost: "#cdc4b3",
-  teal: "#3e9d8f",
-  tealSoft: "#d6ebe5",
   crown: "#d9a648",
-  soil: "#8a6d4f",
-  soilDark: "#6f573e",
-  soilSlot: "#7a5f44",
-  sky: "#eaf5ee",
-  leaf: "#3e9d8f",
+  coral: "#ec7458",
+  track: "rgba(42,33,24,0.10)",
+  leaf: "#5f8a47",
 };
 
 interface Props {
   crowns: number;
   gardenState: GardenState;
-  onSpend: (amount: number) => void;
-  onGardenChange: (next: GardenState) => void;
+  /** Invest available crowns into the current area. */
+  onInvest: () => void;
 }
 
-export default function Garden({ crowns, gardenState, onSpend, onGardenChange }: Props) {
-  const [activePlot, setActivePlot] = useState<number | null>(null);
+export default function Garden({ crowns, gardenState, onInvest }: Props) {
+  const stageIdx = stageImageIndex(gardenState);
+  const area = currentArea(gardenState);
+  const done = isFullyRestored(gardenState);
 
-  // Per-plot pop animation, keyed by index. Triggered when a plant blooms.
-  const popAnims = useRef(
-    Array.from({ length: PLOT_COUNT }, () => new Animated.Value(1))
-  ).current;
-  const prevStages = useRef<number[]>(gardenState.plots.map((p) => p.stage));
+  const [sceneSize, setSceneSize] = useState({ w: 0, h: 0 });
+
+  // ── Cross-fade between scene stages ──────────────────────────────────────
+  const [baseIdx, setBaseIdx] = useState(stageIdx);
+  const [overlayIdx, setOverlayIdx] = useState<number | null>(null);
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    gardenState.plots.forEach((plot, i) => {
-      const prev = prevStages.current[i] ?? 0;
-      if (plot.plantId && plot.stage > prev) {
-        const anim = popAnims[i];
-        anim.setValue(plot.stage >= 2 ? 1.5 : 1.25);
-        Animated.spring(anim, { toValue: 1, friction: plot.stage >= 2 ? 3 : 4, tension: 300, useNativeDriver: true }).start();
-      }
+    if (stageIdx === baseIdx) return;
+    setOverlayIdx(stageIdx);
+    overlayOpacity.setValue(0);
+    Animated.timing(overlayOpacity, { toValue: 1, duration: 650, useNativeDriver: true }).start(() => {
+      setBaseIdx(stageIdx);
+      setOverlayIdx(null);
     });
-    prevStages.current = gardenState.plots.map((p) => p.stage);
-  }, [gardenState]);
+  }, [stageIdx]);
 
-  const closeSheet = () => setActivePlot(null);
+  // ── Progress bar fill ────────────────────────────────────────────────────
+  const fillAnim = useRef(new Animated.Value(0)).current;
+  const pct = area ? Math.min(1, gardenState.invested / area.cost) : 1;
+  useEffect(() => {
+    Animated.timing(fillAnim, { toValue: pct, duration: 450, useNativeDriver: false }).start();
+  }, [pct]);
 
-  const handlePlant = (plantId: string) => {
-    if (activePlot === null) return;
-    const plant = PLANT_BY_ID[plantId];
-    if (!plant || crowns < plant.cost) return;
-    const next = plantSeed(gardenState, activePlot, plantId);
-    if (!next) return;
-    onSpend(plant.cost);
-    onGardenChange(next);
-    closeSheet();
-  };
+  // ── Press feedback when there's nothing to invest ────────────────────────
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  const cardScale = useRef(new Animated.Value(1)).current;
 
-  const handleWater = () => {
-    if (activePlot === null) return;
-    const plot = gardenState.plots[activePlot];
-    const plant = plot.plantId ? PLANT_BY_ID[plot.plantId] : null;
-    if (!plant || crowns < plant.waterCost) return;
-    const next = waterPlot(gardenState, activePlot);
-    if (!next) return;
-    onSpend(plant.waterCost);
-    onGardenChange(next);
-    closeSheet();
-  };
+  function handleCardPress() {
+    if (done) return;
+    const canInvest = crowns > 0 && area && gardenState.invested < area.cost;
+    if (!canInvest) {
+      shakeAnim.setValue(0);
+      Animated.sequence([
+        Animated.timing(shakeAnim, { toValue: 1, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -1, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+      ]).start();
+      return;
+    }
+    cardScale.setValue(0.97);
+    Animated.spring(cardScale, { toValue: 1, friction: 4, tension: 300, useNativeDriver: true }).start();
+    onInvest();
+  }
 
-  const handleClear = () => {
-    if (activePlot === null) return;
-    const next = clearPlot(gardenState, activePlot);
-    if (!next) return;
-    onGardenChange(next);
-    closeSheet();
-  };
-
-  const teaser = nextLockedPlant(gardenState.totalBlooms);
-  const bloomCount = gardenState.plots.filter(isBloomed).length;
+  const nextArea = GARDEN_AREAS[gardenState.restored + 1] ?? null;
+  const shakeX = shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-8, 8] });
 
   return (
     <View style={g.wrap}>
+      {/* Header */}
       <View style={g.header}>
-        <Text style={g.title}>My Garden</Text>
-        <Text style={g.sub}>
-          {gardenState.totalBlooms > 0
-            ? `${gardenState.totalBlooms} bloom${gardenState.totalBlooms === 1 ? "" : "s"} grown`
-            : "Clear levels to earn crowns, then plant"}
-        </Text>
-      </View>
-
-      <View style={g.bed}>
-        <View style={g.grid}>
-          {gardenState.plots.map((plot, i) => (
-            <PlotView
-              key={i}
-              plot={plot}
-              popAnim={popAnims[i]}
-              onPress={() => setActivePlot(i)}
-            />
-          ))}
+        <View style={{ flex: 1 }}>
+          <Text style={g.title}>My Garden</Text>
+          <Text style={g.sub}>
+            {done
+              ? "🌷 Fully restored — beautiful!"
+              : `🌿 ${gardenState.restored} of ${TOTAL_AREAS} areas restored`}
+          </Text>
         </View>
       </View>
 
-      {teaser && (
-        <Text style={g.teaser}>
-          Next: {teaser.stages[2]} {teaser.name} unlocks at {teaser.unlockAtBlooms} blooms
-        </Text>
-      )}
+      {/* Illustrated scene */}
+      <View style={g.sceneArea}>
+        <View
+          style={g.scene}
+          onLayout={(e) => {
+            const { width, height } = e.nativeEvent.layout;
+            setSceneSize((s) => (s.w === width && s.h === height ? s : { w: width, h: height }));
+          }}
+        >
+          <Image source={STAGE_IMAGES[baseIdx]} style={g.sceneImg} resizeMode="cover" />
+          {overlayIdx !== null && (
+            <Animated.Image
+              source={STAGE_IMAGES[overlayIdx]}
+              style={[g.sceneImg, StyleSheet.absoluteFill, { opacity: overlayOpacity }]}
+              resizeMode="cover"
+            />
+          )}
+          {/* Ambient life — makes the garden feel alive */}
+          {sceneSize.h > 0 && <AmbientLife w={sceneSize.w} h={sceneSize.h} />}
+          {/* Soft depth vignette */}
+          <View pointerEvents="none" style={g.vignette} />
+        </View>
+      </View>
 
-      {/* Action sheet */}
-      <Modal visible={activePlot !== null} transparent animationType="fade" onRequestClose={closeSheet}>
-        <TouchableOpacity style={g.overlay} activeOpacity={1} onPress={closeSheet}>
-          <TouchableOpacity style={g.sheet} activeOpacity={1} onPress={() => {}}>
-            {activePlot !== null && (
-              <SheetContent
-                plot={gardenState.plots[activePlot]}
-                crowns={crowns}
-                totalBlooms={gardenState.totalBlooms}
-                onPlant={handlePlant}
-                onWater={handleWater}
-                onClear={handleClear}
-              />
+      {/* Restore card */}
+      <Animated.View style={{ transform: [{ translateX: shakeX }, { scale: cardScale }] }}>
+        {done ? (
+          <View style={g.card}>
+            <View style={g.iconDisc}>
+              <Text style={g.iconEmoji}>🌳</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={g.cardTitle}>Garden Restored</Text>
+              <Text style={g.cardSub}>Every area is in full bloom.</Text>
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity style={g.card} activeOpacity={0.85} onPress={handleCardPress}>
+            <View style={g.iconDisc}>
+              <Text style={g.iconEmoji}>{area?.icon}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={g.eyebrow}>NEXT REWARD</Text>
+              <Text style={g.cardTitle}>{area?.name}</Text>
+              <Text style={g.cardSub}>
+                {crowns > 0 ? "Tap to spend your crowns" : "Restore and unlock this area"}
+              </Text>
+              <View style={g.barRow}>
+                <View style={g.track}>
+                  <Animated.View
+                    style={[
+                      g.fill,
+                      { width: fillAnim.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) },
+                    ]}
+                  />
+                </View>
+                <Text style={g.barLabel}>
+                  <Text style={g.crownIcon}>👑 </Text>
+                  {gardenState.invested}/{area?.cost}
+                </Text>
+              </View>
+            </View>
+            {nextArea && (
+              <View style={g.nextThumb}>
+                <Text style={g.nextThumbEmoji}>{nextArea.icon}</Text>
+                <View style={g.lockBadge}>
+                  <Text style={g.lockBadgeText}>🔒</Text>
+                </View>
+              </View>
             )}
           </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        )}
+      </Animated.View>
     </View>
   );
 }
 
-function PlotView({ plot, popAnim, onPress }: { plot: Plot; popAnim: Animated.Value; onPress: () => void }) {
-  const empty = isPlotEmpty(plot);
-  const plant = plot.plantId ? PLANT_BY_ID[plot.plantId] : null;
-  const emoji = plant ? plant.stages[plot.stage] : null;
-  const bloomed = isBloomed(plot);
+// ─── Ambient life ─────────────────────────────────────────────────────────────
+// Lightweight looping particles (butterflies + drifting petals) so the garden
+// feels alive even when idle. All transforms use the native driver.
 
+function AmbientLife({ w, h }: { w: number; h: number }) {
   return (
-    <TouchableOpacity
-      style={[g.plot, empty && g.plotEmpty, bloomed && g.plotBloomed]}
-      onPress={onPress}
-      activeOpacity={0.75}
-    >
-      {empty ? (
-        <Text style={g.plotPlus}>＋</Text>
-      ) : (
-        <Animated.Text style={[g.plotEmoji, { transform: [{ scale: popAnim }] }]}>
-          {emoji}
-        </Animated.Text>
-      )}
-      {!empty && !bloomed && (
-        <View style={g.stageDots}>
-          {[0, 1, 2].map((s) => (
-            <View key={s} style={[g.dot, plot.stage >= s && g.dotOn]} />
-          ))}
-        </View>
-      )}
-    </TouchableOpacity>
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Petal w={w} h={h} emoji="🌸" startX={w * 0.18} delay={0} duration={9000} />
+      <Petal w={w} h={h} emoji="🍃" startX={w * 0.5} delay={3200} duration={11000} />
+      <Petal w={w} h={h} emoji="🌸" startX={w * 0.78} delay={6000} duration={8200} />
+      <Petal w={w} h={h} emoji="🌼" startX={w * 0.35} delay={4500} duration={10500} />
+      <Butterfly w={w} h={h} xMin={w * 0.12} xMax={w * 0.42} yMin={h * 0.30} yMax={h * 0.58} dx={4200} dy={3100} delay={0} />
+      <Butterfly w={w} h={h} xMin={w * 0.55} xMax={w * 0.85} yMin={h * 0.22} yMax={h * 0.5} dx={5200} dy={3700} delay={900} />
+    </View>
   );
 }
 
-function SheetContent({
-  plot, crowns, totalBlooms, onPlant, onWater, onClear,
-}: {
-  plot: Plot;
-  crowns: number;
-  totalBlooms: number;
-  onPlant: (id: string) => void;
-  onWater: () => void;
-  onClear: () => void;
-}) {
-  // Empty plot -> plant shop
-  if (isPlotEmpty(plot)) {
-    const available = unlockedPlants(totalBlooms);
-    return (
-      <>
-        <Text style={g.sheetTitle}>Plant a seed</Text>
-        <Text style={g.sheetSub}>♛ {crowns} crowns available</Text>
-        <View style={g.shopGrid}>
-          {available.map((p) => {
-            const afford = crowns >= p.cost;
-            return (
-              <TouchableOpacity
-                key={p.id}
-                style={[g.shopItem, !afford && g.shopItemDim]}
-                onPress={() => onPlant(p.id)}
-                activeOpacity={0.7}
-                disabled={!afford}
-              >
-                <Text style={g.shopEmoji}>{p.stages[2]}</Text>
-                <Text style={g.shopName}>{p.name}</Text>
-                <Text style={[g.shopCost, !afford && g.shopCostDim]}>♛ {p.cost}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </>
-    );
-  }
+function Butterfly({
+  xMin, xMax, yMin, yMax, dx, dy, delay,
+}: { w: number; h: number; xMin: number; xMax: number; yMin: number; yMax: number; dx: number; dy: number; delay: number }) {
+  const ax = useRef(new Animated.Value(0)).current;
+  const ay = useRef(new Animated.Value(0)).current;
+  const flap = useRef(new Animated.Value(0)).current;
 
-  // Bloomed plot -> info + clear
-  const plant = PLANT_BY_ID[plot.plantId!];
-  if (isBloomed(plot)) {
-    return (
-      <>
-        <Text style={g.sheetEmojiBig}>{plant.stages[2]}</Text>
-        <Text style={g.sheetTitle}>{plant.name} in full bloom</Text>
-        <Text style={g.sheetSub}>This plot is thriving.</Text>
-        <TouchableOpacity style={g.ghostAction} onPress={onClear} activeOpacity={0.8}>
-          <Text style={g.ghostActionText}>Clear plot</Text>
-        </TouchableOpacity>
-      </>
-    );
-  }
+  useEffect(() => {
+    const yoyo = (v: Animated.Value, d: number) =>
+      Animated.loop(Animated.sequence([
+        Animated.timing(v, { toValue: 1, duration: d, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 0, duration: d, useNativeDriver: true }),
+      ]));
+    const a = yoyo(ax, dx);
+    const b = yoyo(ay, dy);
+    const f = Animated.loop(Animated.sequence([
+      Animated.timing(flap, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(flap, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]));
+    const t = setTimeout(() => { a.start(); b.start(); f.start(); }, delay);
+    return () => { clearTimeout(t); a.stop(); b.stop(); f.stop(); };
+  }, []);
 
-  // Growing plot -> water action
-  const afford = crowns >= plant.waterCost;
-  const nextStageLabel = plot.stage === 0 ? "sprout" : "bloom";
+  const translateX = ax.interpolate({ inputRange: [0, 1], outputRange: [xMin, xMax] });
+  const translateY = ay.interpolate({ inputRange: [0, 1], outputRange: [yMin, yMax] });
+  const scaleX = flap.interpolate({ inputRange: [0, 1], outputRange: [1, 0.55] });
+
   return (
-    <>
-      <Text style={g.sheetEmojiBig}>{plant.stages[plot.stage]}</Text>
-      <Text style={g.sheetTitle}>{plant.name}</Text>
-      <Text style={g.sheetSub}>Water it to grow into a {nextStageLabel}.</Text>
-      <TouchableOpacity
-        style={[g.waterBtn, !afford && g.waterBtnDim]}
-        onPress={onWater}
-        activeOpacity={0.85}
-        disabled={!afford}
-      >
-        <Text style={g.waterBtnText}>💧 Water  ·  ♛ {plant.waterCost}</Text>
-      </TouchableOpacity>
-      {!afford && <Text style={g.notEnough}>Not enough crowns — clear a level to earn more.</Text>}
-    </>
+    <Animated.Text style={[gl.butterfly, { transform: [{ translateX }, { translateY }, { scaleX }] }]}>
+      🦋
+    </Animated.Text>
   );
 }
+
+function Petal({
+  h, emoji, startX, delay, duration,
+}: { w: number; h: number; emoji: string; startX: number; delay: number; duration: number }) {
+  const t = useRef(new Animated.Value(0)).current;
+  const sway = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const fall = Animated.loop(Animated.timing(t, { toValue: 1, duration, useNativeDriver: true }));
+    const s = Animated.loop(Animated.sequence([
+      Animated.timing(sway, { toValue: 1, duration: 1800, useNativeDriver: true }),
+      Animated.timing(sway, { toValue: 0, duration: 1800, useNativeDriver: true }),
+    ]));
+    const timer = setTimeout(() => { fall.start(); s.start(); }, delay);
+    return () => { clearTimeout(timer); fall.stop(); s.stop(); };
+  }, []);
+
+  const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [-20, h + 20] });
+  const translateX = sway.interpolate({ inputRange: [0, 1], outputRange: [startX - 14, startX + 14] });
+  const rotate = t.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "260deg"] });
+  const opacity = t.interpolate({ inputRange: [0, 0.12, 0.85, 1], outputRange: [0, 0.85, 0.85, 0] });
+
+  return (
+    <Animated.Text style={[gl.petal, { opacity, transform: [{ translateX }, { translateY }, { rotate }] }]}>
+      {emoji}
+    </Animated.Text>
+  );
+}
+
+const gl = StyleSheet.create({
+  butterfly: { position: "absolute", top: 0, left: 0, fontSize: 18 },
+  petal: { position: "absolute", top: 0, left: 0, fontSize: 15 },
+});
 
 const g = StyleSheet.create({
-  wrap: { gap: 10 },
-  header: { gap: 3 },
-  title: { fontSize: 18, fontWeight: "900", color: C.ink, letterSpacing: -0.4 },
-  sub: { fontSize: 12, color: C.inkSoft, fontWeight: "500" },
+  wrap: { flex: 1, gap: 14 },
 
-  bed: {
-    backgroundColor: C.soil,
-    borderRadius: 20,
-    padding: BED_PAD,
+  header: { flexDirection: "row", alignItems: "center" },
+  title: { fontSize: 19, fontWeight: "900", color: C.ink, letterSpacing: -0.4 },
+  sub: { fontSize: 12.5, color: C.inkSoft, fontWeight: "600", marginTop: 2 },
+
+  sceneArea: { flex: 1, justifyContent: "center" },
+  scene: {
+    width: "100%",
+    aspectRatio: 819 / 546,
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: "#cdbf9c",
     borderWidth: 1,
-    borderColor: C.soilDark,
-    shadowColor: "rgba(26,29,46,1)",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.14,
-    shadowRadius: 18,
-    elevation: 5,
+    borderColor: "rgba(42,33,24,0.12)",
+    shadowColor: "rgba(42,33,24,1)",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 22,
+    elevation: 6,
   },
-  grid: {
+  sceneImg: { width: "100%", height: "100%" },
+  vignette: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 22,
+    borderWidth: 14,
+    borderColor: "rgba(42,33,24,0.10)",
+  },
+
+  card: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: PLOT_GAP,
-    justifyContent: "center",
-  },
-  plot: {
-    width: PLOT_SIZE,
-    height: PLOT_SIZE,
-    borderRadius: 14,
-    backgroundColor: C.soilSlot,
     alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "rgba(0,0,0,0.12)",
-  },
-  plotEmpty: {
-    backgroundColor: "rgba(0,0,0,0.10)",
-    borderStyle: "dashed",
-    borderColor: "rgba(255,255,255,0.35)",
-  },
-  plotBloomed: {
-    backgroundColor: C.sky,
-    borderColor: C.tealSoft,
-  },
-  plotPlus: { fontSize: 26, color: "rgba(255,255,255,0.55)", fontWeight: "300" },
-  plotEmoji: { fontSize: PLOT_SIZE * 0.5 },
-  stageDots: {
-    position: "absolute",
-    bottom: 6,
-    flexDirection: "row",
-    gap: 4,
-  },
-  dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.3)" },
-  dotOn: { backgroundColor: C.leaf },
-
-  teaser: { fontSize: 11, color: C.inkSoft, fontWeight: "500", paddingHorizontal: 2 },
-
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(26,29,46,0.45)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
+    gap: 14,
     backgroundColor: C.white,
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    padding: 24,
-    paddingBottom: 36,
-    gap: 12,
-    alignItems: "center",
-  },
-  sheetTitle: { fontSize: 18, fontWeight: "900", color: C.ink, letterSpacing: -0.4, textAlign: "center" },
-  sheetSub: { fontSize: 13, color: C.inkSoft, fontWeight: "500", textAlign: "center" },
-  sheetEmojiBig: { fontSize: 56 },
-
-  shopGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "center",
-    marginTop: 4,
-  },
-  shopItem: {
-    width: (SW - 48 - 20) / 3,
-    backgroundColor: "#f5efe6",
-    borderRadius: 14,
-    paddingVertical: 12,
-    alignItems: "center",
-    gap: 4,
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "rgba(26,29,46,0.07)",
+    borderColor: "rgba(42,33,24,0.07)",
+    shadowColor: "rgba(42,33,24,1)",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
   },
-  shopItemDim: { opacity: 0.4 },
-  shopEmoji: { fontSize: 30 },
-  shopName: { fontSize: 12, fontWeight: "700", color: C.ink },
-  shopCost: { fontSize: 12, fontWeight: "800", color: C.crown },
-  shopCostDim: { color: C.inkSoft },
-
-  waterBtn: {
-    alignSelf: "stretch",
-    backgroundColor: C.teal,
-    borderRadius: 16,
-    paddingVertical: 16,
+  iconDisc: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#f1e8d6",
     alignItems: "center",
-    marginTop: 4,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(42,33,24,0.08)",
   },
-  waterBtnDim: { backgroundColor: C.ghost },
-  waterBtnText: { color: "#fff", fontWeight: "900", fontSize: 16, letterSpacing: 0.3 },
-  notEnough: { fontSize: 12, color: C.inkSoft, textAlign: "center" },
+  iconEmoji: { fontSize: 28 },
+  eyebrow: { fontSize: 10, fontWeight: "900", color: C.coral, letterSpacing: 1, marginBottom: 1 },
+  cardTitle: { fontSize: 16, fontWeight: "900", color: C.ink, letterSpacing: -0.3 },
+  cardSub: { fontSize: 12.5, color: C.inkSoft, fontWeight: "500", marginTop: 1 },
 
-  ghostAction: { paddingVertical: 10, paddingHorizontal: 16, marginTop: 2 },
-  ghostActionText: { fontSize: 14, fontWeight: "700", color: C.inkSoft },
+  barRow: { flexDirection: "row", alignItems: "center", gap: 9, marginTop: 8 },
+  track: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: C.track,
+    overflow: "hidden",
+  },
+  fill: { height: "100%", borderRadius: 4, backgroundColor: C.coral },
+  barLabel: { fontSize: 12, fontWeight: "800", color: C.ink },
+  crownIcon: { fontSize: 11, color: C.crown },
+
+  nextThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#f1e8d6",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(42,33,24,0.08)",
+  },
+  nextThumbEmoji: { fontSize: 24, opacity: 0.45 },
+  lockBadge: {
+    position: "absolute",
+    right: -4,
+    bottom: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: C.white,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(42,33,24,0.1)",
+  },
+  lockBadgeText: { fontSize: 10 },
 });
