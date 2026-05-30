@@ -1,9 +1,9 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated,
 } from "react-native";
 import {
-  GardenState, GARDEN_AREAS,
+  GardenState, GARDEN_AREAS, TOTAL_AREAS,
   currentArea, isFullyRestored,
 } from "./gardenData";
 
@@ -32,16 +32,30 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
   // ── Progress bar fill ────────────────────────────────────────────────────
   const fillAnim = useRef(new Animated.Value(0)).current;
   const pct = area ? Math.min(1, gardenState.invested / area.cost) : 1;
+  // When the restored count changes we've moved to a new (empty) area; snap the
+  // bar to the new level instantly instead of letting it visibly drain. Keyed on
+  // `restored` (not pct) so it works even when both old and new pct are 0.
+  const restoredRef = useRef(gardenState.restored);
   useEffect(() => {
+    const advanced = gardenState.restored !== restoredRef.current;
+    restoredRef.current = gardenState.restored;
+    if (advanced) {
+      fillAnim.setValue(pct);
+      return;
+    }
     Animated.timing(fillAnim, { toValue: pct, duration: 450, useNativeDriver: false }).start();
-  }, [pct]);
+  }, [gardenState.restored, pct]);
 
   // ── Press feedback when there's nothing to invest ────────────────────────
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(1)).current;
+  // While the completing fill animation plays, show the bar/label as full and
+  // ignore further taps until the advance is committed.
+  const busyRef = useRef(false);
+  const [fillingToFull, setFillingToFull] = useState(false);
 
   function handleCardPress() {
-    if (done) return;
+    if (done || busyRef.current) return;
     const canInvest = crowns > 0 && area && gardenState.invested < area.cost;
     if (!canInvest) {
       shakeAnim.setValue(0);
@@ -54,6 +68,26 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
     }
     cardScale.setValue(0.97);
     Animated.spring(cardScale, { toValue: 1, friction: 4, tension: 300, useNativeDriver: true }).start();
+
+    const need = area!.cost - gardenState.invested;
+    const willComplete = crowns >= need;
+
+    if (willComplete) {
+      // Show the bar fill all the way to 100% before advancing, so the player
+      // gets visual confirmation that this area was restored.
+      busyRef.current = true;
+      setFillingToFull(true);
+      Animated.timing(fillAnim, { toValue: 1, duration: 450, useNativeDriver: false }).start(() => {
+        setTimeout(() => {
+          setFillingToFull(false);
+          busyRef.current = false;
+          onInvest(); // advancing changes `restored`, so the effect snaps the bar to the new area
+        }, 280);
+      });
+      return;
+    }
+
+    // Partial investment: the pct effect animates the bar up to the new level.
     onInvest();
   }
 
@@ -80,7 +114,10 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
               <Text style={g.iconEmoji}>{area?.icon}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={g.eyebrow}>NEXT REWARD</Text>
+              <View style={g.eyebrowRow}>
+                <Text style={g.eyebrow}>NEXT REWARD</Text>
+                <Text style={g.stepLabel}>STEP {gardenState.restored + 1} / {TOTAL_AREAS}</Text>
+              </View>
               <Text style={g.cardTitle}>{area?.name}</Text>
               <Text style={g.cardSub}>
                 {crowns > 0 ? "Tap to spend your crowns" : "Restore and unlock this area"}
@@ -96,7 +133,7 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
                 </View>
                 <Text style={g.barLabel}>
                   <Text style={g.crownIcon}>👑 </Text>
-                  {gardenState.invested}/{area?.cost}
+                  {fillingToFull ? area?.cost : gardenState.invested}/{area?.cost}
                 </Text>
               </View>
             </View>
@@ -226,7 +263,9 @@ const g = StyleSheet.create({
     borderColor: "rgba(42,33,24,0.08)",
   },
   iconEmoji: { fontSize: 28 },
-  eyebrow: { fontSize: 10, fontWeight: "900", color: C.coral, letterSpacing: 1, marginBottom: 1 },
+  eyebrowRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 1 },
+  eyebrow: { fontSize: 10, fontWeight: "900", color: C.coral, letterSpacing: 1 },
+  stepLabel: { fontSize: 10, fontWeight: "900", color: C.inkSoft, letterSpacing: 0.5 },
   cardTitle: { fontSize: 16, fontWeight: "900", color: C.ink, letterSpacing: -0.3 },
   cardSub: { fontSize: 12.5, color: C.inkSoft, fontWeight: "500", marginTop: 1 },
 
