@@ -92,11 +92,15 @@ export default function MainMenu({
       {/* Ambient life drifts across the whole scene */}
       <AmbientLife w={SCREEN_W} h={SCREEN_H} />
 
-      {/* Crown badge — fixed top right */}
-      <View style={ms.topBar}>
+      {/* Crown badge — fixed top right (DEV: tap to add 10 crowns) */}
+      <TouchableOpacity
+        style={ms.topBar}
+        activeOpacity={__DEV__ ? 0.7 : 1}
+        onPress={() => { if (__DEV__) onDebugAddCrowns?.(10); }}
+      >
         <Text style={ms.crownEmoji}>👑</Text>
         <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>{crowns}</Animated.Text>
-      </View>
+      </TouchableOpacity>
 
       {/* DEV — reset first-launch onboarding (dev builds only) */}
       {__DEV__ && (

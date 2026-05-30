@@ -102,6 +102,7 @@ export default function App() {
           crowns={crowns}
           gardenState={gardenState}
           onInvestGarden={handleInvestGarden}
+          onDebugAddCrowns={(amount) => setCrowns((c) => c + amount)}
           onPlay={(stage, m) => navigateTo("game", stage, m)}
           onResetTutorial={handleResetTutorial}
         />
