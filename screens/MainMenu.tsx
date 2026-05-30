@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Animated, StatusBar, Platform,
+  Animated, StatusBar, Platform, ImageBackground, Dimensions,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { GameMode } from "../App";
 import type { GardenState } from "./gardenData";
-import Garden from "./Garden";
+import Garden, { AmbientLife } from "./Garden";
+
+const MAIN_BG = require("../assets/garden/main.jpg");
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -72,8 +75,11 @@ export default function MainMenu({
   }
 
   return (
-    <View style={ms.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+    <ImageBackground source={MAIN_BG} style={ms.root} resizeMode="cover">
+      <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+
+      {/* Ambient life drifts across the whole scene */}
+      <AmbientLife w={SCREEN_W} h={SCREEN_H} />
 
       {/* Crown badge — fixed top right */}
       <View style={ms.topBar}>
@@ -88,17 +94,16 @@ export default function MainMenu({
         </TouchableOpacity>
       )}
 
+      {/* Bottom UI floats over the garden background */}
       <Animated.View
-        style={[ms.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+        style={[ms.bottom, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
-        {/* Garden meta — the main part of the screen */}
         <Garden
           crowns={crowns}
           gardenState={gardenState}
           onInvest={onInvestGarden}
         />
 
-        {/* Primary CTA — pinned below */}
         <TouchableOpacity
           style={ms.playBtn}
           onPress={() => onPlay(endlessStage, "endless")}
@@ -113,7 +118,7 @@ export default function MainMenu({
           <Text style={ms.playBtnArrow}>→</Text>
         </TouchableOpacity>
       </Animated.View>
-    </View>
+    </ImageBackground>
   );
 }
 
@@ -145,28 +150,14 @@ const ms = StyleSheet.create({
   crownEmoji: { fontSize: 17 },
   crownCount: { fontSize: 16, fontWeight: "900", color: C.ink },
 
-  content: {
-    flex: 1,
-    paddingTop: Platform.OS === "android" ? 72 : 88,
+  bottom: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     paddingHorizontal: 22,
-    paddingBottom: 36,
-    gap: 16,
-  },
-
-  titleBlock: { alignItems: "flex-start", gap: 5 },
-  title: {
-    fontSize: 34,
-    fontWeight: "900",
-    color: C.ink,
-    letterSpacing: -1,
-    lineHeight: 38,
-  },
-  titleDot: { color: C.coral },
-  titleSub: {
-    fontSize: 13,
-    color: C.inkSoft,
-    fontWeight: "500",
-    lineHeight: 18,
+    paddingBottom: Platform.OS === "android" ? 28 : 40,
+    gap: 14,
   },
 
   playBtn: {

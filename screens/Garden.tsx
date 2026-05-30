@@ -1,19 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
-  View, Text, TouchableOpacity, StyleSheet, Animated, Image,
+  View, Text, TouchableOpacity, StyleSheet, Animated,
 } from "react-native";
 import {
-  GardenState, GARDEN_AREAS, TOTAL_AREAS,
-  currentArea, isFullyRestored, stageImageIndex,
+  GardenState, GARDEN_AREAS,
+  currentArea, isFullyRestored,
 } from "./gardenData";
-
-// Scene images, barren (0) -> fully restored (TOTAL_AREAS).
-const STAGE_IMAGES = [
-  require("../assets/garden/stage0.png"),
-  require("../assets/garden/stage1.png"),
-  require("../assets/garden/stage2.png"),
-  require("../assets/garden/stage3.png"),
-];
 
 const C = {
   white: "#fbfaf6",
@@ -34,26 +26,8 @@ interface Props {
 }
 
 export default function Garden({ crowns, gardenState, onInvest }: Props) {
-  const stageIdx = stageImageIndex(gardenState);
   const area = currentArea(gardenState);
   const done = isFullyRestored(gardenState);
-
-  const [sceneSize, setSceneSize] = useState({ w: 0, h: 0 });
-
-  // ── Cross-fade between scene stages ──────────────────────────────────────
-  const [baseIdx, setBaseIdx] = useState(stageIdx);
-  const [overlayIdx, setOverlayIdx] = useState<number | null>(null);
-  const overlayOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (stageIdx === baseIdx) return;
-    setOverlayIdx(stageIdx);
-    overlayOpacity.setValue(0);
-    Animated.timing(overlayOpacity, { toValue: 1, duration: 650, useNativeDriver: true }).start(() => {
-      setBaseIdx(stageIdx);
-      setOverlayIdx(null);
-    });
-  }, [stageIdx]);
 
   // ── Progress bar fill ────────────────────────────────────────────────────
   const fillAnim = useRef(new Animated.Value(0)).current;
@@ -87,44 +61,8 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
   const shakeX = shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-8, 8] });
 
   return (
-    <View style={g.wrap}>
-      {/* Header */}
-      <View style={g.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={g.title}>My Garden</Text>
-          <Text style={g.sub}>
-            {done
-              ? "🌷 Fully restored — beautiful!"
-              : `🌿 ${gardenState.restored} of ${TOTAL_AREAS} areas restored`}
-          </Text>
-        </View>
-      </View>
-
-      {/* Illustrated scene */}
-      <View style={g.sceneArea}>
-        <View
-          style={g.scene}
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout;
-            setSceneSize((s) => (s.w === width && s.h === height ? s : { w: width, h: height }));
-          }}
-        >
-          <Image source={STAGE_IMAGES[baseIdx]} style={g.sceneImg} resizeMode="cover" />
-          {overlayIdx !== null && (
-            <Animated.Image
-              source={STAGE_IMAGES[overlayIdx]}
-              style={[g.sceneImg, StyleSheet.absoluteFill, { opacity: overlayOpacity }]}
-              resizeMode="cover"
-            />
-          )}
-          {/* Ambient life — makes the garden feel alive */}
-          {sceneSize.h > 0 && <AmbientLife w={sceneSize.w} h={sceneSize.h} />}
-          {/* Soft depth vignette */}
-          <View pointerEvents="none" style={g.vignette} />
-        </View>
-      </View>
-
-      {/* Restore card */}
+    <View>
+      {/* Restore card — floats over the full-screen garden background */}
       <Animated.View style={{ transform: [{ translateX: shakeX }, { scale: cardScale }] }}>
         {done ? (
           <View style={g.card}>
@@ -181,7 +119,7 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
 // Lightweight looping particles (butterflies + drifting petals) so the garden
 // feels alive even when idle. All transforms use the native driver.
 
-function AmbientLife({ w, h }: { w: number; h: number }) {
+export function AmbientLife({ w, h }: { w: number; h: number }) {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Petal w={w} h={h} emoji="🌸" startX={w * 0.18} delay={0} duration={9000} />
@@ -262,35 +200,6 @@ const gl = StyleSheet.create({
 });
 
 const g = StyleSheet.create({
-  wrap: { flex: 1, gap: 14 },
-
-  header: { flexDirection: "row", alignItems: "center" },
-  title: { fontSize: 19, fontWeight: "900", color: C.ink, letterSpacing: -0.4 },
-  sub: { fontSize: 12.5, color: C.inkSoft, fontWeight: "600", marginTop: 2 },
-
-  sceneArea: { flex: 1, justifyContent: "center" },
-  scene: {
-    width: "100%",
-    aspectRatio: 819 / 546,
-    borderRadius: 22,
-    overflow: "hidden",
-    backgroundColor: "#cdbf9c",
-    borderWidth: 1,
-    borderColor: "rgba(42,33,24,0.12)",
-    shadowColor: "rgba(42,33,24,1)",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 22,
-    elevation: 6,
-  },
-  sceneImg: { width: "100%", height: "100%" },
-  vignette: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 22,
-    borderWidth: 14,
-    borderColor: "rgba(42,33,24,0.10)",
-  },
-
   card: {
     flexDirection: "row",
     alignItems: "center",
