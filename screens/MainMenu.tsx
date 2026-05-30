@@ -1,14 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Animated, StatusBar, Platform, ImageBackground, Dimensions,
+  Animated, StatusBar, Platform, Dimensions,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { GameMode } from "../App";
-import type { GardenState } from "./gardenData";
+import { GardenState, stageImageIndex } from "./gardenData";
 import Garden, { AmbientLife } from "./Garden";
 
-const MAIN_BG = require("../assets/garden/main.jpg");
+// Full-screen garden scenes, indexed by stageImageIndex (number of areas restored).
+// 0 = barren, then one image per restored area up to fully restored.
+const GARDEN_SCENES = [
+  require("../assets/garden/main.jpg"),   // 0 — barren
+  require("../assets/garden/stage0.png"), // 1 — first area restored
+  require("../assets/garden/stage1.png"), // 2 — second area restored
+  require("../assets/garden/stage2.png"), // 3 — fully restored
+];
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -37,10 +44,12 @@ interface Props {
   onInvestGarden: () => void;
   onPlay: (stage: number, mode: GameMode) => void;
   onResetTutorial?: () => void;
+  /** DEV-only: add crowns for debugging. */
+  onDebugAddCrowns?: (amount: number) => void;
 }
 
 export default function MainMenu({
-  crowns, gardenState, onInvestGarden, onPlay, onResetTutorial,
+  crowns, gardenState, onInvestGarden, onPlay, onResetTutorial, onDebugAddCrowns,
 }: Props) {
   const [endlessStage, setEndlessStage] = useState(1);
   const crownBump = useRef(new Animated.Value(1)).current;
@@ -74,8 +83,10 @@ export default function MainMenu({
     onResetTutorial?.();
   }
 
+  const sceneIndex = stageImageIndex(gardenState);
+
   return (
-    <ImageBackground source={MAIN_BG} style={ms.root} resizeMode="cover">
+    <SceneBackground index={sceneIndex} style={ms.root}>
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
       {/* Ambient life drifts across the whole scene */}
@@ -118,7 +129,47 @@ export default function MainMenu({
           <Text style={ms.playBtnArrow}>→</Text>
         </TouchableOpacity>
       </Animated.View>
-    </ImageBackground>
+    </SceneBackground>
+  );
+}
+
+// ─── Scene background ─────────────────────────────────────────────────────────
+// Renders the full-screen garden image for the current state and crossfades to a
+// new image whenever the garden advances a stage. The previous scene stays at the
+// bottom so there is never a transparent flash mid-transition.
+
+function SceneBackground({
+  index, style, children,
+}: { index: number; style?: any; children: React.ReactNode }) {
+  const clamp = (i: number) => Math.max(0, Math.min(GARDEN_SCENES.length - 1, i));
+  const [layers, setLayers] = useState(() => [
+    { key: 0, source: GARDEN_SCENES[clamp(index)], anim: new Animated.Value(1) },
+  ]);
+  const prevIndexRef = useRef(index);
+
+  useEffect(() => {
+    if (index === prevIndexRef.current) return;
+    prevIndexRef.current = index;
+    const anim = new Animated.Value(0);
+    const layer = { key: Date.now(), source: GARDEN_SCENES[clamp(index)], anim };
+    setLayers((prev) => [...prev, layer]);
+    Animated.timing(anim, { toValue: 1, duration: 700, useNativeDriver: true }).start(({ finished }) => {
+      if (finished) setLayers([{ key: layer.key, source: layer.source, anim: new Animated.Value(1) }]);
+    });
+  }, [index]);
+
+  return (
+    <View style={style}>
+      {layers.map((layer) => (
+        <Animated.Image
+          key={layer.key}
+          source={layer.source}
+          resizeMode="cover"
+          style={[StyleSheet.absoluteFill, { width: undefined, height: undefined, opacity: layer.anim }]}
+        />
+      ))}
+      {children}
+    </View>
   );
 }
 
