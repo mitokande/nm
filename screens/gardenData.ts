@@ -15,10 +15,14 @@ export interface GardenArea {
 // Order matters: areas are restored top-to-bottom. The number of areas equals
 // the number of "restoration steps"; there is one scene image per step plus the
 // initial barren scene (so total scene images = GARDEN_AREAS.length + 1).
+// 5 steps drive 6 scenes (main + stage0..stage4):
+//   main → barren · stage0 → plant rose · stage1 → another flower bed
+//   stage2 → rose grows · stage3 → rose grows more · stage4 → fully grown
 export const GARDEN_AREAS: GardenArea[] = [
-  { id: "roses",  name: "Rose Garden", cost: 5,  icon: "🌹" },
-  { id: "beds",   name: "Flower Beds", cost: 8,  icon: "🌸" },
-  { id: "pond",   name: "Lily Pond",   cost: 12, icon: "🪷" },
+  { id: "rose",      name: "Plant a Rose",         cost: 5,  icon: "🌹" },
+  { id: "beds",      name: "Add another Flower Bed", cost: 8,  icon: "🌸" },
+  { id: "grow1",     name: "Grow the Rose",        cost: 12, icon: "🌱" },
+  { id: "fullbloom", name: "Full Bloom",           cost: 20, icon: "🌺" },
 ];
 
 export const TOTAL_AREAS = GARDEN_AREAS.length;

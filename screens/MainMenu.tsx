@@ -12,9 +12,11 @@ import Garden, { AmbientLife } from "./Garden";
 // 0 = barren, then one image per restored area up to fully restored.
 const GARDEN_SCENES = [
   require("../assets/garden/main.jpg"),   // 0 — barren
-  require("../assets/garden/stage0.png"), // 1 — first area restored
-  require("../assets/garden/stage1.png"), // 2 — second area restored
-  require("../assets/garden/stage2.png"), // 3 — fully restored
+  require("../assets/garden/stage0.png"), // 1 — plant the first rose
+  require("../assets/garden/stage1.png"), // 2 — add another flower bed
+  require("../assets/garden/stage2.png"), // 3 — rose grows
+  require("../assets/garden/stage3.png"), // 4 — rose grows more
+  require("../assets/garden/stage4.png"), // 5 — rose fully grown
 ];
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
@@ -102,10 +104,10 @@ export default function MainMenu({
         <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>{crowns}</Animated.Text>
       </TouchableOpacity>
 
-      {/* DEV — reset first-launch onboarding (dev builds only) */}
+      {/* DEV — wipe all game data & restart onboarding (dev builds only) */}
       {__DEV__ && (
         <TouchableOpacity style={ms.devBtn} onPress={devResetFirstLaunch} activeOpacity={0.7}>
-          <Text style={ms.devBtnText}>↺ onboard</Text>
+          <Text style={ms.devBtnText}>↺ reset all</Text>
         </TouchableOpacity>
       )}
 

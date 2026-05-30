@@ -74,8 +74,12 @@ export default function App() {
     navigateTo("menu");
   }
 
-  function handleResetTutorial() {
-    AsyncStorage.removeItem("onboarding_done");
+  async function handleResetTutorial() {
+    // DEV: wipe ALL persisted game data (crowns, garden, high scores,
+    // endless progress, golden completions, onboarding) and reset memory.
+    try { await AsyncStorage.clear(); } catch {}
+    setCrowns(0);
+    setGardenState(defaultGardenState());
     setNeedsTutorial(true);
     navigateTo("game", 1, "tutorial");
   }
