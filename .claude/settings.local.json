@@ -27,7 +27,8 @@
       "Bash(python3 -c \"from PIL import Image; print\\('PIL available'\\)\")",
       "Bash(pip3 install *)",
       "Bash(git *)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(echo \"TSC EXIT: $?\")"
     ]
   },
   "model": "claude-opus-4-7"

@@ -20,8 +20,8 @@ export const TUTORIAL_STAGES: TutorialStage[] = [
     // Row 0: 3 3 4 4 2 2 3 3 2  |  Row 1 partial: 2
     values: [3, 3, 4, 4, 2, 2, 3, 3, 2, 2],
     steps: [
-      { action: "match", pair: [0, 1], tip: "Tap two cells with the same number", matchType: "identical" },
-      { action: "match", pair: [2, 3], tip: "Same numbers — tap them to match!", matchType: "identical" },
+      { action: "match", pair: [0, 1], tip: "Drag one number onto a cell with the same number", matchType: "identical" },
+      { action: "match", pair: [2, 3], tip: "Same numbers — drag them together!", matchType: "identical" },
       { action: "match", pair: [4, 5], tip: "Keep going — find the pairs", matchType: "identical" },
       { action: "match", pair: [6, 7], tip: "Nice! Same number, same rule", matchType: "identical" },
       { action: "match", pair: [8, 9], tip: "Numbers can match across row ends too!", matchType: "identical" },
@@ -64,7 +64,7 @@ export const TUTORIAL_STAGES: TutorialStage[] = [
     steps: [
       { action: "match", pair: [0, 1], tip: "Quick warm-up — same numbers match", matchType: "identical" },
       { action: "hint",  tip: "Stuck? Tap 💡 to reveal a valid pair" },
-      { action: "match", pair: [2, 3], tip: "There it is — tap the glowing pair", matchType: "sum10" },
+      { action: "match", pair: [2, 3], tip: "There it is — drag the glowing pair together", matchType: "sum10" },
       { action: "add",   tip: "Out of moves? Tap ＋ to add a row" },
       { action: "match", pair: [9, 10], tip: "Fresh cells! 2 + 8 = 10. You're ready!", matchType: "sum10" },
     ],

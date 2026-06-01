@@ -11,6 +11,8 @@ import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
 import Constants from "expo-constants";
 import levelsJson from "./levels.json";
+import { GestureDetector, Gesture } from "react-native-gesture-handler";
+import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-native-reanimated";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -255,6 +257,11 @@ function CountUp({ to, visible, style, duration = 950 }: {
 const { width: SCREEN_W } = Dimensions.get("window");
 const BOARD_H_PAD = 8;
 const CELL_SIZE = Math.floor((SCREEN_W - BOARD_H_PAD * 2 - 24) / COLS);
+// gs.root padding — the floating drag tile is an absolute child of gs.root, so
+// its (0,0) origin sits inside this padding. Subtract it to align the tile with
+// the finger's absolute (window) position. Keep in sync with the `root` style.
+const ROOT_PAD_LEFT = 12;
+const ROOT_PAD_TOP = Platform.OS === "android" ? 36 : 52;
 
 export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned, onBack, onTutorialComplete }: Props) {
   const [stage, setStage] = useState(initialStage);
@@ -263,7 +270,9 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const [targets, setTargets] = useState<Partial<Record<GemType, number>>>(initialTargets);
   const [collected, setCollected] = useState<Partial<Record<GemType, number>>>({});
   const wonRef = useRef(false);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(null); // cell currently being dragged
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null); // valid drop target under finger
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   const [score, setScore] = useState(0);
   const [adds, setAdds] = useState(5);
   const [hints, setHints] = useState(2);
@@ -322,6 +331,20 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const scrollViewWrapRef = useRef<any>(null);
   const scrollViewTopRef = useRef(150);
   const scrollYRef = useRef(0);
+
+  // Drag-and-drop ("merge") gesture state. Shared values drive the floating
+  // tile on the UI thread; refs hold the live source/hover so gesture
+  // callbacks aren't tripped up by async setState.
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const dragSourceRef = useRef<number | null>(null);
+  const hoverRef = useRef<number | null>(null);
+  // Shared snapshots read inside the gesture worklet to decide, at touch-down,
+  // whether a touch lands on a draggable cell (→ activate drag immediately) or
+  // on empty space (→ let the ScrollView scroll). dragMap is indexed by
+  // VISIBLE row so the worklet needs no destroyed-row math.
+  const scrollYSV = useSharedValue(0);
+  const dragMapSV = useSharedValue<number[]>([]);
   const scoreCardRef = useRef<View>(null);
   const scoreTargetRef = useRef({ x: SCREEN_W / 4, y: 80 });
   const rewardedAdRef = useRef<any>(null);
@@ -469,10 +492,27 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     }
   }, [shakingCell]);
 
-  // Reset selectBounce when nothing is selected. The actual spring on first selection
-  // is triggered inline in handleTap so it doesn't fire on cell-to-cell switches
-  // (e.g. invalid-pair transitions), which would leave the new cell mid-oscillation
-  // when its node mounts after the shake.
+  // Keep the worklet-readable draggable-cell map in sync with the board.
+  // map[visibleRow * COLS + col] = 1 when that cell is touchable (active).
+  useEffect(() => {
+    const totalRows = Math.ceil(cells.length / COLS);
+    const map: number[] = [];
+    let vis = 0;
+    for (let r = 0; r < totalRows; r++) {
+      if (destroyedRows.includes(r)) continue;
+      for (let c = 0; c < COLS; c++) {
+        const cell = cells[r * COLS + c];
+        map[vis * COLS + c] = cell && cell.active ? 1 : 0;
+      }
+      vis++;
+    }
+    dragMapSV.value = map;
+  }, [cells, destroyedRows]);
+
+  // Reset selectBounce when nothing is being dragged. The actual spring on
+  // drag start is triggered inline in onDragBegin so it doesn't fire on
+  // unrelated transitions, which would leave a cell mid-oscillation when its
+  // node mounts after the shake.
   useEffect(() => {
     if (selected === null) {
       selectBounce.stopAnimation();
@@ -714,9 +754,31 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     setTimeout(() => setToast(null), ms);
   }
 
-  function handleTap(idx: number) {
+  // Map a touch point — in coordinates LOCAL to the ScrollView the gesture is
+  // attached to — onto a board cell index, or null if outside the grid. Using
+  // local coords (e.x/e.y) means we only subtract the board's inner padding and
+  // add the scroll offset; no window/status-bar math (which, with edge-to-edge,
+  // skewed the row by ~one cell).
+  function cellIndexAt(lx: number, ly: number): number | null {
+    const col = Math.floor((lx - BOARD_H_PAD) / CELL_SIZE);
+    if (col < 0 || col >= COLS) return null;
+    const contentY = ly + scrollYRef.current;
+    const rowVis = Math.floor((contentY - BOARD_H_PAD) / CELL_SIZE);
+    if (rowVis < 0) return null;
+    const totalRows = Math.ceil(cells.length / COLS);
+    const rOrig = originalRow(rowVis, destroyedRows, totalRows);
+    if (rOrig < 0) return null;
+    const idx = rOrig * COLS + col;
+    if (idx < 0 || idx >= cells.length) return null;
+    return idx;
+  }
+
+  // ── Drag-to-merge gesture handlers (called on the JS thread via runOnJS) ──
+  function onDragBegin(ax: number, ay: number) {
     if (paused || stageComplete || timeUp) return;
     if (poppingPair !== null) return;
+    const idx = cellIndexAt(ax, ay);
+    if (idx === null) return;
     const cell = cells[idx];
     if (!cell?.active) return;
 
@@ -733,7 +795,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       if (step && step.action === "match" && !step.pair.includes(idx)) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setShakingCell(idx);
-        if (!toast) showToast("Tap the glowing cells!", "warn", 1000);
+        if (!toast) showToast("Drag the glowing cells together!", "warn", 1000);
         return;
       }
     }
@@ -745,29 +807,65 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       return;
     }
 
-    if (selected === null) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      playSound("select", 0.6);
-      selectBounce.setValue(0.82);
-      Animated.spring(selectBounce, {
-        toValue: 1,
-        friction: 3,
-        tension: 350,
-        useNativeDriver: true,
-      }).start();
-      setSelected(idx);
-      return;
+    dragSourceRef.current = idx;
+    setSelected(idx);
+    setScrollEnabled(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    playSound("select", 0.6);
+    selectBounce.setValue(0.82);
+    Animated.spring(selectBounce, {
+      toValue: 1,
+      friction: 3,
+      tension: 350,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function onDragMove(ax: number, ay: number) {
+    if (dragSourceRef.current === null) return;
+    const idx = cellIndexAt(ax, ay);
+    const valid =
+      idx !== null &&
+      idx !== dragSourceRef.current &&
+      isValidPair(cells, dragSourceRef.current, idx, destroyedRows);
+    const next = valid ? idx : null;
+    if (next !== hoverRef.current) {
+      hoverRef.current = next;
+      setHoverIdx(next);
     }
-    if (selected === idx) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      playSound("select", 0.45);
+  }
+
+  function onDragEnd(ax: number, ay: number) {
+    const src = dragSourceRef.current;
+    dragSourceRef.current = null;
+    hoverRef.current = null;
+    setHoverIdx(null);
+    setScrollEnabled(true);
+    setSelected(null);
+    if (src === null) return;
+    const idx = cellIndexAt(ax, ay);
+    if (idx !== null && idx !== src && isValidPair(cells, src, idx, destroyedRows)) {
+      performMatch(src, idx);
+    } else {
       selectBounce.stopAnimation();
       selectBounce.setValue(1);
-      setSelected(null);
-      return;
+      if (idx !== null && idx !== src) rejectMatch(idx);
     }
+  }
 
-    if (isValidPair(cells, selected, idx, destroyedRows)) {
+  function rejectMatch(targetIdx: number) {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    playSound("error", 0.6);
+    setShakingCell(targetIdx);
+    setCombo(0);
+  }
+
+  // Clear a valid pair (equal value, or summing to 10, with a clear path).
+  // `selected`/`idx` are aliased so the original match body reads unchanged.
+  function performMatch(aIdx: number, bIdx: number) {
+    const selected = aIdx;
+    const idx = bIdx;
+    {
       const a = cells[selected];
       const b = cells[idx];
       const isSame = a.value === b.value;
@@ -861,19 +959,10 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
         comboTimerRef.current = setTimeout(() => setCombo(0), 2500);
         return next;
       });
-      setSelected(null);
       setHintPair(null);
       if (mode === "tutorial") {
         advanceTutorialStep();
       }
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      playSound("error", 0.6);
-      selectBounce.stopAnimation();
-      selectBounce.setValue(1);
-      setShakingCell(idx);
-      setSelected(idx);
-      setCombo(0);
     }
   }
 
@@ -1042,6 +1131,55 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     return result;
   }, [cells, destroyedRows]);
 
+  // One board-level pan gesture handles all dragging. A brief press-and-hold
+  // activates the drag so a quick swipe still scrolls the board. Worklet
+  // callbacks drive the floating tile position on the UI thread and hop to JS
+  // (runOnJS) for hit-testing and the match logic.
+  const dragGesture = Gesture.Pan()
+    .manualActivation(true)
+    .onTouchesDown((e, state) => {
+      // Activate instantly if the finger is on a draggable cell; otherwise let
+      // the touch fall through to the ScrollView so the board can still scroll.
+      const t = e.changedTouches[0];
+      if (!t) {
+        state.fail();
+        return;
+      }
+      const col = Math.floor((t.x - BOARD_H_PAD) / CELL_SIZE);
+      const rowVis = Math.floor((t.y + scrollYSV.value - BOARD_H_PAD) / CELL_SIZE);
+      if (col >= 0 && col < COLS && rowVis >= 0 && dragMapSV.value[rowVis * COLS + col] === 1) {
+        state.activate();
+      } else {
+        state.fail();
+      }
+    })
+    .onStart((e) => {
+      dragX.value = e.absoluteX;
+      dragY.value = e.absoluteY;
+      // e.x/e.y are local to the ScrollView → used for cell hit-testing.
+      runOnJS(onDragBegin)(e.x, e.y);
+    })
+    .onUpdate((e) => {
+      dragX.value = e.absoluteX;
+      dragY.value = e.absoluteY;
+      runOnJS(onDragMove)(e.x, e.y);
+    })
+    .onEnd((e) => {
+      runOnJS(onDragEnd)(e.x, e.y);
+    })
+    .onFinalize(() => {
+      // Safety cleanup if the gesture is cancelled without onEnd.
+      runOnJS(onDragEnd)(-1, -1);
+    });
+
+  const dragTileStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: dragX.value - CELL_SIZE / 2 - ROOT_PAD_LEFT },
+      { translateY: dragY.value - CELL_SIZE / 2 - ROOT_PAD_TOP },
+      { scale: 1.12 },
+    ],
+  }));
+
   return (
     <View style={gs.root}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
@@ -1195,11 +1333,16 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
           scrollViewTopRef.current = y;
         })}
       >
+      <GestureDetector gesture={dragGesture}>
       <ScrollView
         style={gs.boardScroll}
         contentContainerStyle={gs.boardContent}
         showsVerticalScrollIndicator={false}
-        onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+        scrollEnabled={scrollEnabled}
+        onScroll={(e) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+          scrollYSV.value = e.nativeEvent.contentOffset.y;
+        }}
         scrollEventThrottle={16}
       >
         <View style={gs.board}>
@@ -1215,7 +1358,8 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                 ]}
               >
                 {row.cells.map((cell) => {
-                  const isSelected = selected === cell.id;
+                  const isSelected = selected === cell.id; // being dragged
+                  const isHover = hoverIdx === cell.id; // valid drop target under finger
                   const isHint = !!(hintPair && (hintPair[0] === cell.id || hintPair[1] === cell.id));
                   const isPopping = !!(poppingPair && (poppingPair[0] === cell.id || poppingPair[1] === cell.id));
                   const isShaking = shakingCell === cell.id;
@@ -1253,31 +1397,27 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
                       {isFrozen && cell.active && (
                         <Text style={gs.cellFreezeIcon} pointerEvents="none">❄</Text>
                       )}
-                      <TouchableOpacity
+                      <View
                         style={[
                           gs.cell,
                           ghost && gs.cellGhost,
                           isFrozen && gs.cellFrozen,
+                          (isHint || isHover) && gs.cellHint,
                           isSelected && gs.cellSelected,
-                          isHint && gs.cellHint,
                           isPopping && gs.cellPopping,
                           isPopping && { backgroundColor: matchIsSame ? C.coral : C.teal, borderColor: matchIsSame ? C.coral : C.teal },
                         ]}
-                        onPress={() => handleTap(cell.id)}
-                        disabled={!cell.active}
-                        activeOpacity={0.65}
                       >
-                        {!isFrozen && (
+                        {!isFrozen && !isSelected && (
                           <Text style={[
                             gs.cellNum,
                             ghost && gs.cellNumGhost,
-                            isSelected && gs.cellNumSelected,
                             isPopping && gs.cellNumPopping,
                           ]}>
                             {cell.value}
                           </Text>
                         )}
-                      </TouchableOpacity>
+                      </View>
                     </Animated.View>
                   );
                 })}
@@ -1317,6 +1457,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
           })()}
         </View>
       </ScrollView>
+      </GestureDetector>
       </View>
       </Animated.View>
 
@@ -1353,7 +1494,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       {/* How-to */}
       {mode !== "tutorial" && <View style={gs.howto}>
         <Text style={gs.howtoText}>
-          Match <Text style={gs.howtoEm}>identical</Text> numbers or pairs that{" "}
+          Drag <Text style={gs.howtoEm}>identical</Text> numbers together, or pairs that{" "}
           <Text style={gs.howtoEm}>sum to 10</Text>. Connect along rows, columns,
           diagonals, or across line ends.
         </Text>
@@ -1380,6 +1521,21 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
         ]}>
           <Text style={gs.toastText}>{toast.text}</Text>
         </Animated.View>
+      )}
+
+      {/* Floating drag tile — follows the finger while dragging a number */}
+      {selected !== null && cells[selected] && (
+        <Reanimated.View
+          pointerEvents="none"
+          style={[
+            gs.cell,
+            gs.cellSelected,
+            { position: "absolute", top: 0, left: 0, zIndex: 600 },
+            dragTileStyle,
+          ]}
+        >
+          <Text style={[gs.cellNum, gs.cellNumSelected]}>{cells[selected].value}</Text>
+        </Reanimated.View>
       )}
 
       {/* Flying scores overlay */}

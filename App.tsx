@@ -1,6 +1,7 @@
 // Garden meta: restore-the-garden progression
 import React, { useState, useEffect, useRef } from "react";
 import { Animated, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
 import GameScreen from "./screens/GameScreen";
@@ -91,6 +92,7 @@ export default function App() {
   if (!loaded) return <View style={{ flex: 1, backgroundColor: "#f5efe6" }} />;
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
       {screen === "game" ? (
         <GameScreen
@@ -112,5 +114,6 @@ export default function App() {
         />
       )}
     </Animated.View>
+    </GestureHandlerRootView>
   );
 }
