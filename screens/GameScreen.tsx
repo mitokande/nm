@@ -255,12 +255,15 @@ function CountUp({ to, visible, style, duration = 950 }: {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const { width: SCREEN_W } = Dimensions.get("window");
-const BOARD_H_PAD = 8;
-const CELL_SIZE = Math.floor((SCREEN_W - BOARD_H_PAD * 2 - 24) / COLS);
+const BOARD_H_PAD = 4;
 // gs.root padding — the floating drag tile is an absolute child of gs.root, so
 // its (0,0) origin sits inside this padding. Subtract it to align the tile with
 // the finger's absolute (window) position. Keep in sync with the `root` style.
-const ROOT_PAD_LEFT = 12;
+const ROOT_PAD_LEFT = 6;
+// Cells fill the full board width across COLS fixed columns, so the only slack
+// available for a bigger touch target is the surrounding chrome. Trim the root
+// and board padding to the minimum and hand every reclaimed pixel to the cells.
+const CELL_SIZE = Math.floor((SCREEN_W - BOARD_H_PAD * 2 - ROOT_PAD_LEFT * 2) / COLS);
 const ROOT_PAD_TOP = Platform.OS === "android" ? 36 : 52;
 
 export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned, onBack, onTutorialComplete }: Props) {
@@ -907,9 +910,9 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
       const row1Vis = visibleRow(Math.floor(selected / COLS), destroyedRows);
       const col2 = idx % COLS;
       const row2Vis = visibleRow(Math.floor(idx / COLS), destroyedRows);
-      const sx1 = 12 + BOARD_H_PAD + col1 * CELL_SIZE + CELL_SIZE / 2;
+      const sx1 = ROOT_PAD_LEFT + BOARD_H_PAD + col1 * CELL_SIZE + CELL_SIZE / 2;
       const sy1 = scrollViewTopRef.current + BOARD_H_PAD + row1Vis * CELL_SIZE + CELL_SIZE / 2 - scrollYRef.current;
-      const sx2 = 12 + BOARD_H_PAD + col2 * CELL_SIZE + CELL_SIZE / 2;
+      const sx2 = ROOT_PAD_LEFT + BOARD_H_PAD + col2 * CELL_SIZE + CELL_SIZE / 2;
       const sy2 = scrollViewTopRef.current + BOARD_H_PAD + row2Vis * CELL_SIZE + CELL_SIZE / 2 - scrollYRef.current;
       setFloatingScores((f) => [
         ...f,
@@ -1778,7 +1781,7 @@ const gs = StyleSheet.create({
     flex: 1,
     backgroundColor: C.bg,
     paddingTop: Platform.OS === "android" ? 36 : 52,
-    paddingHorizontal: 12,
+    paddingHorizontal: ROOT_PAD_LEFT,
     paddingBottom: 16,
   },
   header: {
