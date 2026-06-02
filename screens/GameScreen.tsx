@@ -16,7 +16,7 @@ import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-nat
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const COLS = 9;
+const COLS = 7;
 
 interface FreezeStage { id: number; values: number[]; frozenIndices: number[]; }
 
@@ -264,6 +264,7 @@ const ROOT_PAD_LEFT = 6;
 // available for a bigger touch target is the surrounding chrome. Trim the root
 // and board padding to the minimum and hand every reclaimed pixel to the cells.
 const CELL_SIZE = Math.floor((SCREEN_W - BOARD_H_PAD * 2 - ROOT_PAD_LEFT * 2) / COLS);
+const CELL_RADIUS = Math.round(CELL_SIZE * 0.16);
 const ROOT_PAD_TOP = Platform.OS === "android" ? 36 : 52;
 
 export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned, onBack, onTutorialComplete }: Props) {
@@ -1915,6 +1916,7 @@ const gs = StyleSheet.create({
   cell: {
     width: CELL_SIZE, height: CELL_SIZE,
     borderWidth: 1, borderColor: C.grid,
+    borderRadius: CELL_RADIUS,
     alignItems: "center", justifyContent: "center",
     backgroundColor: "transparent",
   },
