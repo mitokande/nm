@@ -18,14 +18,18 @@ interface Props {
   visible: boolean;
   soundOn: boolean;
   hapticsOn: boolean;
+  notifyOn: boolean;
   onToggleSound: (next: boolean) => void;
   onToggleHaptics: (next: boolean) => void;
+  onToggleNotifications: (next: boolean) => void;
   onResetTutorial?: () => void;
   onClose: () => void;
 }
 
 export default function Settings({
-  visible, soundOn, hapticsOn, onToggleSound, onToggleHaptics, onResetTutorial, onClose,
+  visible, soundOn, hapticsOn, notifyOn,
+  onToggleSound, onToggleHaptics, onToggleNotifications,
+  onResetTutorial, onClose,
 }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -52,6 +56,13 @@ export default function Settings({
             sub="Light taps on matches and combos"
             value={hapticsOn}
             onChange={onToggleHaptics}
+          />
+          <Row
+            icon="🔔"
+            label="Notifications"
+            sub="Hearts full and daily reward reminders"
+            value={notifyOn}
+            onChange={onToggleNotifications}
           />
 
           {__DEV__ && onResetTutorial && (

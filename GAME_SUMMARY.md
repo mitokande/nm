@@ -17,12 +17,16 @@ Number Match is a mobile puzzle game built with React Native and Expo. The playe
 - Runs in parallel with AsyncStorage loading — no startup delay.
 
 ### Main Menu (`screens/MainMenu.tsx`)
-- Full-screen illustrated **garden background** that crossfades to a new image whenever the player restores another garden area (see [Garden Meta](#garden-meta)). The bottom UI floats over the scene.
-- Crown balance pinned to the top-right corner; in `__DEV__` builds, tapping it adds 10 crowns for debugging.
-- **Endless play button** — "Stage N · earn crowns to grow"; resumes from the saved Endless stage.
-- **Garden card** (`screens/Garden.tsx`) — shows the current restoration area, a progress bar, and the crown cost remaining. Tapping the card invests all available crowns; if it's not enough yet, the card shakes; if it completes the area, the bar fills to 100% and the background image advances.
+- Full-screen illustrated **garden background** that crossfades to a new image whenever the player restores another garden area (see [Garden Meta](#garden-meta)). All UI floats over the scene.
+- **Top-left cluster** — ⚙ Settings, 🎁 Daily Reward (red `!` badge when claim is available), and the ❤ Lives pill (count `/ MAX_LIVES` + countdown to next refill, see [Lives & Energy](#lives--energy)).
+- **Top-right cluster** — ✉ Mailbox (red unread badge) and the 👑 crown balance pill. `__DEV__` builds: tapping the crown adds 10 for debugging.
+- **Garden card** (`screens/Garden.tsx`) — current restoration area, progress bar, and remaining crown cost. Tap to invest all available crowns; not enough yet → card shakes; finishes the area → bar fills, scene crossfades.
+- **Daily Challenge card** — "Play one stage today · +30 👑 · +1 ❤". Tap launches Endless; first crown earned that day satisfies the objective. Completed state shows `✓ Done · resets in Xh Ym`. See [Daily Challenge](#daily-challenge).
+- **Booster shelf** (`screens/BoosterShelf.tsx`) — two pills (💡 Hint, ➕ Add Row) showing owned counts and `+cost👑` buy buttons; buttons disable when crowns are short or the cap is reached. See [Boosters](#boosters).
+- **Secondary mode tiles** (`screens/ModeTiles.tsx`) — Golden / Time / Freeze. Each shows mode icon, label, and current stage / caption. All gated on lives.
+- **Endless Play CTA** (primary) — "Play" / "Continue · Stage N"; switches to "Out of lives · Next heart in m:ss" when lives are 0 and disables the tap.
 - Entrance fade + slide animation on first load.
-- (Golden Garden, Time Attack, and Freeze Mode are implemented in `GameScreen.tsx` and addressable via `onPlay(stage, mode)`, but at the time of writing the main menu surfaces only Endless + Garden. Tutorial mode auto-launches on first run.)
+- Modals reachable from the menu: [Settings](#settings), [Mailbox](#mailbox), [Daily Login](#daily-login) (auto-pops once per session when claim is available).
 
 ### Game Screen (`screens/GameScreen.tsx`)
 - Header: back button, stage label (colour-coded per mode), pause/resume toggle.
@@ -44,6 +48,87 @@ Number Match is a mobile puzzle game built with React Native and Expo. The playe
 | **Time Attack** | `"timeattack"` | Sprint scored under a 60 s starting timer; clearing the whole board adds **+15 s** (capped at 120 s) and re-seeds with stage 1. Valid matches may also add a small time bonus. |
 | **Freeze Mode** | `"freeze"` | Board starts with frozen cells; thaw them by matching orthogonally adjacent pairs (6 stages). Progress saved. |
 | **Tutorial** | `"tutorial"` | 4-stage interactive onboarding. Auto-starts on first launch. Forced-drag overlay guides each step. |
+
+---
+
+## Meta Loops
+
+Retention/engagement systems that sit alongside core gameplay. All state lives in `App.tsx` and persists through AsyncStorage; the menu reads them as props.
+
+### Lives & Energy
+
+`screens/livesData.ts` — pure helpers + persistence shape.
+
+- **Cap:** `MAX_LIVES = 5`. **Regen:** 1 life per `REGEN_MS = 15 minutes`, wall-clock based.
+- Every real run (non-tutorial) deducts 1 life on entry. Tutorial is always free so onboarding can't hard-block.
+- **Play is gated**: when `count === 0` the Endless CTA and mode tiles disable and the CTA reads "Out of lives — next heart in m:ss". The Daily Challenge card is gated the same way.
+- A 1 s `setInterval` in `App.tsx` calls `tickRegen` so the in-memory count climbs without input. The interval is paused while `AppState` is not `"active"` — wall-clock math means one tick on foreground catches up however long the app was away.
+- Granted by: completing the Daily Challenge (+1), claiming day-3/5/7 Daily Login rewards (1 / 2 / 5), claiming a mailbox message that has a `lives` reward.
+
+### Daily Challenge
+
+`screens/dailyChallenge.ts` — date helpers + reward constants (`DAILY_BONUS_CROWNS = 30`, `DAILY_BONUS_LIVES = 1`).
+
+- Objective: **play any stage today** (tutorial excluded).
+- Completion is detected in `App.tsx:handleCrownsEarned` — the first crown earned outside tutorial each day flips `daily_challenge_date` to today's key and:
+  - Grants `+30 👑` and `+1 ❤` immediately.
+  - Pushes a "Daily Challenge complete" message into the mailbox as the receipt (pre-claimed).
+- Resets at local midnight; the card shows `Done · resets in Xh Ym` until then.
+
+### Daily Login
+
+`screens/dailyLogin.ts` + `screens/DailyLogin.tsx`.
+
+- 7-day calendar; the day advances on each successive daily claim, resets to **day 1** on a missed day or after the day-7 mega claim.
+- **Rewards** (escalating):
+
+| Day | Crowns | Lives |
+|---|---|---|
+| 1 | 10 | — |
+| 2 | 20 | — |
+| 3 | — | 1 |
+| 4 | 30 | — |
+| 5 | — | 2 |
+| 6 | 40 | — |
+| 7 (mega) | 100 | 5 |
+
+- Modal auto-pops once per session, 450 ms after menu mount, when the player has an unclaimed reward. The 🎁 icon in the top-left shows a red `!` badge while claim is available.
+- Persistence: `{ streak: 0..7, lastClaimDate: "YYYY-MM-DD" }`. Computing today's day from these two fields makes the math purely a function of dates — no time-zone gotchas beyond local midnight.
+
+### Mailbox
+
+`screens/mailboxData.ts` + `screens/Mailbox.tsx`.
+
+- Persistent list of `MailMessage { id, title, body, ts, read, reward?, claimed }`. Newest first.
+- Seeded once on first launch with a Welcome message claimable for +10 👑 (`mailbox_seeded === "1"` gates the seed).
+- Rewards land here as receipts (Daily Challenge bonus arrives pre-claimed; live-ops sends would arrive unclaimed).
+- Unread badge counts entries that are either `!read` or have an unclaimed reward.
+
+### Boosters
+
+`screens/boosters.ts` + `screens/BoosterShelf.tsx`.
+
+- Persistent inventory: `{ hint: 0..9, addrow: 0..9 }`. Owned counts shown on the shelf.
+- **Buy with crowns**: `BOOSTER_COST.hint = 20`, `BOOSTER_COST.addrow = 30`. Buy buttons disable when crowns are short or inventory is at `MAX_BOOSTERS = 9`.
+- **One-shot consumption per run**: on `navigateTo("game", …)` for any real mode, the current inventory is captured into `bonusBoosters` and the persistent inventory is zeroed. `GameScreen` reads `bonusHints`/`bonusAdds` from props and adds them to the *first* stage's allowance via the `useState` initializer; subsequent `startStage` calls reset to the per-mode base, so the bonus is naturally one-time.
+
+### Notifications
+
+`screens/notifications.ts`.
+
+- `expo-notifications` is **lazy-required** so the app keeps working in Expo Go (or before the package is even installed). All schedule helpers no-op silently when the module is missing.
+- Three local notifications, cancel-and-reschedule on every state change:
+  - **Hearts full** — fires at the exact moment `count` would reach `MAX_LIVES`; cancelled if already full or notifications are off.
+  - **Daily Challenge** — fires at **7pm local** if not completed; targets tomorrow if already done today.
+  - **Daily Login** — fires at **9am local the next day**.
+- Permission is requested **once, after the tutorial completes** (not on first launch — warmer moment). Denial is sticky: the toggle in Settings flips back off and `notifications_asked` prevents re-prompting. Re-enabling from Settings re-requests permission.
+
+### Settings
+
+`screens/Settings.tsx` — modal opened from the top-left ⚙ icon.
+
+- Rows: 🔊 Sound, 📳 Haptics, 🔔 Notifications. Sound wires through `setMuted` in `screens/sound.ts`. Haptics + Notifications are stored prefs (haptics has no current consumer; Notifications gates the schedule helpers).
+- `__DEV__` row: **Reset all progress** — calls `AsyncStorage.clear()`, resets all in-memory state, re-seeds the mailbox, and routes to Tutorial stage 1.
 
 ---
 
@@ -202,11 +287,22 @@ All persistent data is stored via `@react-native-async-storage/async-storage`.
 | `golden_done_<id>` | `"1"` | Completion flag per Golden Garden level |
 | `endless_stage` | integer | Last-reached Endless stage (for "Continue" resume) |
 | `freeze_stage` | integer | Last-reached Freeze stage (for resume) |
+| `golden_stage` | integer | Last-reached Golden stage (for menu tile + resume) |
 | `onboarding_done` | `"1"` | Set after Tutorial is completed; skips tutorial on subsequent launches |
+| `lives_state` | JSON | `{ count, lastRegenTs }` — see [Lives & Energy](#lives--energy) |
+| `mailbox` | JSON | Array of `MailMessage` (see [Mailbox](#mailbox)) |
+| `mailbox_seeded` | `"1"` | Welcome message has been seeded; prevents re-seeding |
+| `daily_challenge_date` | `"YYYY-MM-DD"` | Date the Daily Challenge was last completed |
+| `daily_login_state` | JSON | `{ streak: 0..7, lastClaimDate }` — Daily Login calendar |
+| `boosters` | JSON | `{ hint, addrow }` — owned booster inventory |
+| `sound_muted` | `"1"`/`"0"` | Sound effects pref (`"1"` = muted; default unset = enabled) |
+| `haptics_enabled` | `"1"`/`"0"` | Haptic feedback pref (default unset = enabled) |
+| `notifications_enabled` | `"1"`/`"0"` | Local notification pref (default unset = enabled) |
+| `notifications_asked` | `"1"` | Permission has been requested once; prevents re-prompting |
 
-The `__DEV__` "reset tutorial" button calls `AsyncStorage.clear()` — it wipes the entire store, including crowns and garden state, then restarts the tutorial.
+The Settings "Reset all progress" (`__DEV__` only) calls `AsyncStorage.clear()` — wipes the entire store, restores defaults in memory, re-seeds the mailbox, then restarts the tutorial.
 
-Crown data loads on app startup; best scores load each time a stage begins or is restarted.
+Crown data, lives, mailbox, daily-login state, and boosters all hydrate in parallel on app startup; best scores load each time a stage begins or is restarted.
 
 ---
 
@@ -224,6 +320,7 @@ Crown data loads on app startup; best scores load each time a stage begins or is
 | Gestures | `react-native-gesture-handler` (board-level pan) + `react-native-reanimated` shared values for the floating drag tile |
 | Android shadow fix | `renderToHardwareTextureAndroid` on animated views |
 | Ads | `react-native-google-mobile-ads` (rewarded ad for Add Row) |
+| Notifications | `expo-notifications` — **lazy-required**, helpers no-op when the module is absent so Expo Go and uninstalled-package builds both keep working |
 
 ## Visual Design
 
@@ -347,17 +444,28 @@ Defined in `screens/tutorialStages.ts` (`TutorialStage` + `TutorialStep` interfa
 ## File Structure
 
 ```
-App.tsx                   — Root: splash gate, screen router, crown + garden state, tutorial gate, AsyncStorage bootstrap
+App.tsx                   — Root: splash gate, screen router, all meta-loop state, lives regen tick, notification scheduling, AsyncStorage bootstrap, bonus-booster handoff
 screens/
   SplashScreen.tsx        — Opening logo animation (spring in, title fade, hold, fade out)
-  MainMenu.tsx            — Full-screen garden background; Endless play button; Garden card; dev controls
+  MainMenu.tsx            — Garden background; top-bar clusters; daily challenge card; booster shelf; mode tiles; Endless Play CTA; modal mounts
   Garden.tsx              — Garden investment card (progress bar, area icon, press-to-invest)
   gardenData.ts           — Pure helpers: GARDEN_AREAS, normalizeGardenState, investCrowns
   GameScreen.tsx          — All game logic, drag gesture, board rendering, modals, animations, tutorial drag-blocking, AdMob rewarded ad
   tutorialStages.ts       — Tutorial stage definitions (values, forced-drag steps, tips)
   goldenStages.ts         — Type definitions (GemType, GoldenStage, GEM_EMOJI, GEM_NAME)
   levels.json             — Hand-authored stage data for endless / freeze / golden
-  sound.ts                — Sound playback helpers
+  sound.ts                — Sound playback helpers; setMuted is wired to the Settings toggle
+  livesData.ts            — Lives shape, regen math, spend/grant helpers, countdown formatter
+  mailboxData.ts          — Mailbox message shape, normalize/seed, pushMessage, unread counting
+  Mailbox.tsx             — Mailbox modal: list of messages, claim buttons, empty state
+  dailyChallenge.ts       — Today's-key + reset countdown helpers; DAILY_BONUS_CROWNS / DAILY_BONUS_LIVES
+  dailyLogin.ts           — 7-day calendar state, claim/nextClaimDay helpers, DAILY_REWARDS table
+  DailyLogin.tsx          — Daily reward modal with pulsing today's-cell + mega Day-7 row
+  boosters.ts             — Booster inventory shape, BOOSTER_COST, MAX_BOOSTERS
+  BoosterShelf.tsx        — Two booster pills with +crown buy buttons
+  ModeTiles.tsx           — Golden / Time / Freeze secondary mode tiles
+  Settings.tsx            — Settings modal: Sound / Haptics / Notifications + DEV reset
+  notifications.ts        — Lazy-required expo-notifications wrapper; schedule helpers for lives-full / daily-challenge / daily-login
 tools/level-editor/
   index.html              — Single-file browser editor for levels.json (no build step)
   README.md               — Editor docs; explains play-test rule sync invariant

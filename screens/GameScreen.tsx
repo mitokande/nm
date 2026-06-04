@@ -57,7 +57,13 @@ interface Props {
   initialStage: number;
   mode: GameMode;
   crowns: number;
+  /** Extra hints granted from the persistent booster shelf — applied to the first stage of this run only. */
+  bonusHints?: number;
+  /** Extra add-row charges from the booster shelf — applied to the first stage only. */
+  bonusAdds?: number;
   onCrownsEarned: (amount: number) => void;
+  /** Notify App when a new stage is reached so menu tiles can reflect it. */
+  onStageAdvance?: (mode: GameMode, stage: number) => void;
   onBack: () => void;
   onTutorialComplete?: () => void;
 }
@@ -267,7 +273,11 @@ const CELL_SIZE = Math.floor((SCREEN_W - BOARD_H_PAD * 2 - ROOT_PAD_LEFT * 2) / 
 const CELL_RADIUS = Math.round(CELL_SIZE * 0.16);
 const ROOT_PAD_TOP = Platform.OS === "android" ? 36 : 52;
 
-export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned, onBack, onTutorialComplete }: Props) {
+export default function GameScreen({
+  initialStage, mode, crowns,
+  bonusHints = 0, bonusAdds = 0,
+  onCrownsEarned, onStageAdvance, onBack, onTutorialComplete,
+}: Props) {
   const [stage, setStage] = useState(initialStage);
   const [cells, setCells] = useState<Cell[]>(() => buildCellsForMode(initialStage, mode));
   const initialTargets = mode === "golden" ? (getGoldenStage(initialStage)?.targets ?? {}) : {};
@@ -281,8 +291,11 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const [hoverIdx, setHoverIdx] = useState<number | null>(null); // valid drop target under finger
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [score, setScore] = useState(0);
-  const [adds, setAdds] = useState(5);
-  const [hints, setHints] = useState(2);
+  // Bonus boosters from the menu shelf fold into the first stage's allowance.
+  // Subsequent startStage calls reset to the per-mode base, so the bonus is
+  // naturally one-shot.
+  const [adds, setAdds] = useState(5 + (bonusAdds ?? 0));
+  const [hints, setHints] = useState(2 + (bonusHints ?? 0));
   const [adLoaded, setAdLoaded] = useState(false);
   const [hintPair, setHintPair] = useState<[number, number] | null>(() => {
     if (mode === "tutorial") {
@@ -1098,12 +1111,16 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
 
   function startStage(s: number) {
     stageEpochRef.current += 1;
-    if (mode === "endless" || mode === "freeze") {
-      const key = mode === "endless" ? "endless_stage" : "freeze_stage";
+    if (mode === "endless" || mode === "freeze" || mode === "golden") {
+      const key =
+        mode === "endless" ? "endless_stage" :
+        mode === "freeze"  ? "freeze_stage"  :
+        "golden_stage";
       AsyncStorage.getItem(key).then((prev) => {
         const prevNum = prev ? parseInt(prev, 10) : 1;
         if (s > prevNum) AsyncStorage.setItem(key, String(s));
       });
+      onStageAdvance?.(mode, s);
     }
     setCells(buildCellsForMode(s, mode));
     setTargets(mode === "golden" ? (getGoldenStage(s)?.targets ?? {}) : {});

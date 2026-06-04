@@ -14,8 +14,13 @@ import {
   msUntilTomorrow, formatHMS, DAILY_BONUS_CROWNS, DAILY_BONUS_LIVES,
 } from "./dailyChallenge";
 import { MailMessage, unreadCount } from "./mailboxData";
+import { DailyLoginState, canClaimToday } from "./dailyLogin";
+import { Boosters } from "./boosters";
 import Settings from "./Settings";
 import Mailbox from "./Mailbox";
+import DailyLogin from "./DailyLogin";
+import ModeTiles from "./ModeTiles";
+import BoosterShelf from "./BoosterShelf";
 
 // Full-screen garden scenes, indexed by stageImageIndex (number of areas restored).
 // 0 = barren, then one image per restored area up to fully restored.
@@ -55,14 +60,22 @@ interface Props {
   lives: LivesState;
   mailbox: MailMessage[];
   dailyCompletedToday: boolean;
+  dailyLogin: DailyLoginState;
+  boosters: Boosters;
+  goldenStage: number;
+  freezeStage: number;
   soundOn: boolean;
   hapticsOn: boolean;
+  notifyOn: boolean;
   /** Invest the player's crowns into the current garden area. */
   onInvestGarden: () => void;
   onPlay: (stage: number, mode: GameMode) => void;
   onClaimMail: (id: string) => void;
+  onClaimDailyLogin: () => void;
+  onBuyBooster: (key: "hint" | "addrow") => void;
   onToggleSound: (next: boolean) => void;
   onToggleHaptics: (next: boolean) => void;
+  onToggleNotifications: (next: boolean) => void;
   onResetTutorial?: () => void;
   /** DEV-only: add crowns for debugging. */
   onDebugAddCrowns?: (amount: number) => void;
@@ -70,13 +83,17 @@ interface Props {
 
 export default function MainMenu({
   crowns, gardenState, lives, mailbox, dailyCompletedToday,
-  soundOn, hapticsOn,
-  onInvestGarden, onPlay, onClaimMail,
-  onToggleSound, onToggleHaptics, onResetTutorial, onDebugAddCrowns,
+  dailyLogin, boosters, goldenStage, freezeStage,
+  soundOn, hapticsOn, notifyOn,
+  onInvestGarden, onPlay, onClaimMail, onClaimDailyLogin, onBuyBooster,
+  onToggleSound, onToggleHaptics, onToggleNotifications,
+  onResetTutorial, onDebugAddCrowns,
 }: Props) {
   const [endlessStage, setEndlessStage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mailOpen, setMailOpen] = useState(false);
+  const [dailyLoginOpen, setDailyLoginOpen] = useState(false);
+  const dailyAutoPoppedRef = useRef(false);
   const [now, setNow] = useState(Date.now());
 
   const crownBump = useRef(new Animated.Value(1)).current;
@@ -146,6 +163,17 @@ export default function MainMenu({
     }
   }, [unread]);
 
+  // Auto-pop the daily reward modal once per session if the player can claim.
+  // Standard hybrid-casual onboarding moment — fast dopamine on app open.
+  const dailyClaimable = canClaimToday(dailyLogin);
+  useEffect(() => {
+    if (dailyClaimable && !dailyAutoPoppedRef.current) {
+      dailyAutoPoppedRef.current = true;
+      const t = setTimeout(() => setDailyLoginOpen(true), 450);
+      return () => clearTimeout(t);
+    }
+  }, [dailyClaimable]);
+
   const sceneIndex = stageImageIndex(gardenState);
   const canPlay = lives.count > 0;
   const livesCountdownMs = msUntilNextLife(lives, now);
@@ -159,7 +187,7 @@ export default function MainMenu({
       {/* Ambient life drifts across the whole scene */}
       <AmbientLife w={SCREEN_W} h={SCREEN_H} />
 
-      {/* ── Top-left cluster: settings + lives ───────────────────────────── */}
+      {/* ── Top-left cluster: settings + daily reward + lives ────────────── */}
       <View style={ms.topLeft}>
         <TouchableOpacity
           style={ms.iconBtn}
@@ -168,6 +196,20 @@ export default function MainMenu({
           hitSlop={8}
         >
           <Text style={ms.iconBtnGlyph}>⚙</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={ms.iconBtn}
+          onPress={() => setDailyLoginOpen(true)}
+          activeOpacity={0.75}
+          hitSlop={8}
+        >
+          <Text style={ms.iconBtnGlyph}>🎁</Text>
+          {dailyClaimable && (
+            <View style={ms.badge}>
+              <Text style={ms.badgeText}>!</Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         <Animated.View style={[ms.livesPill, { transform: [{ scale: heartBump }] }]}>
@@ -228,6 +270,17 @@ export default function MainMenu({
           onPress={() => canPlay && onPlay(endlessStage, "endless")}
         />
 
+        {/* ── Booster shelf ─────────────────────────────────────────────── */}
+        <BoosterShelf boosters={boosters} crowns={crowns} onBuy={onBuyBooster} />
+
+        {/* ── Secondary mode tiles ──────────────────────────────────────── */}
+        <ModeTiles
+          goldenStage={goldenStage}
+          freezeStage={freezeStage}
+          disabled={!canPlay}
+          onPlay={onPlay}
+        />
+
         {/* ── Play button (gated on lives) ──────────────────────────────── */}
         <TouchableOpacity
           style={[ms.playBtn, !canPlay && ms.playBtnDisabled]}
@@ -253,8 +306,10 @@ export default function MainMenu({
         visible={settingsOpen}
         soundOn={soundOn}
         hapticsOn={hapticsOn}
+        notifyOn={notifyOn}
         onToggleSound={onToggleSound}
         onToggleHaptics={onToggleHaptics}
+        onToggleNotifications={onToggleNotifications}
         onResetTutorial={onResetTutorial}
         onClose={() => setSettingsOpen(false)}
       />
@@ -264,6 +319,18 @@ export default function MainMenu({
         messages={mailbox}
         onClaim={onClaimMail}
         onClose={() => setMailOpen(false)}
+      />
+
+      <DailyLogin
+        visible={dailyLoginOpen}
+        state={dailyLogin}
+        onClaim={() => {
+          onClaimDailyLogin();
+          // Leave the modal open so the user sees the "Claimed today" state,
+          // then auto-dismiss after a beat.
+          setTimeout(() => setDailyLoginOpen(false), 900);
+        }}
+        onClose={() => setDailyLoginOpen(false)}
       />
     </SceneBackground>
   );
