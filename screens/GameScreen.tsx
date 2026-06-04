@@ -274,6 +274,9 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   const [targets, setTargets] = useState<Partial<Record<GemType, number>>>(initialTargets);
   const [collected, setCollected] = useState<Partial<Record<GemType, number>>>({});
   const wonRef = useRef(false);
+  // Bumped on every startStage so deferred work (row-clear setTimeout etc.) can
+  // detect that the board it queued against is gone and bail.
+  const stageEpochRef = useRef(0);
   const [selected, setSelected] = useState<number | null>(null); // cell currently being dragged
   const [hoverIdx, setHoverIdx] = useState<number | null>(null); // valid drop target under finger
   const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -363,6 +366,13 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   useEffect(() => {
     let cancelled = false;
     const unsubs: Array<() => void> = [];
+
+    // Expo Go has no native AdMob module — touching the require triggers a
+    // TurboModuleRegistry Invariant Violation in the logs. Bail out early.
+    if (Constants.appOwnership === "expo") {
+      console.log("[ads] running in Expo Go — skipping AdMob init");
+      return;
+    }
 
     let admob: any;
     try {
@@ -683,7 +693,12 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
     }
     if (newlyCleared.length > 0) {
       setClearingRows((prev) => [...prev, ...newlyCleared]);
+      const epoch = stageEpochRef.current;
       setTimeout(() => {
+        // If startStage ran while this timeout was pending, the row indices we
+        // captured belong to a board that no longer exists — applying them
+        // would punch holes in the freshly loaded stage.
+        if (stageEpochRef.current !== epoch) return;
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         playSound("row_clear", 0.8);
         setDestroyedRows((prev) => [...prev, ...newlyCleared]);
@@ -1082,6 +1097,7 @@ export default function GameScreen({ initialStage, mode, crowns, onCrownsEarned,
   }
 
   function startStage(s: number) {
+    stageEpochRef.current += 1;
     if (mode === "endless" || mode === "freeze") {
       const key = mode === "endless" ? "endless_stage" : "freeze_stage";
       AsyncStorage.getItem(key).then((prev) => {

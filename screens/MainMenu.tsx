@@ -7,6 +7,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { GameMode } from "../App";
 import { GardenState, stageImageIndex } from "./gardenData";
 import Garden, { AmbientLife } from "./Garden";
+import {
+  LivesState, MAX_LIVES, msUntilNextLife, formatCountdown,
+} from "./livesData";
+import {
+  msUntilTomorrow, formatHMS, DAILY_BONUS_CROWNS, DAILY_BONUS_LIVES,
+} from "./dailyChallenge";
+import { MailMessage, unreadCount } from "./mailboxData";
+import Settings from "./Settings";
+import Mailbox from "./Mailbox";
 
 // Full-screen garden scenes, indexed by stageImageIndex (number of areas restored).
 // 0 = barren, then one image per restored area up to fully restored.
@@ -35,6 +44,7 @@ const C = {
   danger: "#d45c5c",
   crown: "#d9a648",
   freeze: "#3a9fdf",
+  heart: "#e35d6a",
 };
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -42,20 +52,38 @@ const C = {
 interface Props {
   crowns: number;
   gardenState: GardenState;
+  lives: LivesState;
+  mailbox: MailMessage[];
+  dailyCompletedToday: boolean;
+  soundOn: boolean;
+  hapticsOn: boolean;
   /** Invest the player's crowns into the current garden area. */
   onInvestGarden: () => void;
   onPlay: (stage: number, mode: GameMode) => void;
+  onClaimMail: (id: string) => void;
+  onToggleSound: (next: boolean) => void;
+  onToggleHaptics: (next: boolean) => void;
   onResetTutorial?: () => void;
   /** DEV-only: add crowns for debugging. */
   onDebugAddCrowns?: (amount: number) => void;
 }
 
 export default function MainMenu({
-  crowns, gardenState, onInvestGarden, onPlay, onResetTutorial, onDebugAddCrowns,
+  crowns, gardenState, lives, mailbox, dailyCompletedToday,
+  soundOn, hapticsOn,
+  onInvestGarden, onPlay, onClaimMail,
+  onToggleSound, onToggleHaptics, onResetTutorial, onDebugAddCrowns,
 }: Props) {
   const [endlessStage, setEndlessStage] = useState(1);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mailOpen, setMailOpen] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
   const crownBump = useRef(new Animated.Value(1)).current;
+  const heartBump = useRef(new Animated.Value(1)).current;
+  const mailBump = useRef(new Animated.Value(1)).current;
   const isFirstCrownRef = useRef(true);
+  const isFirstLivesRef = useRef(true);
 
   useEffect(() => {
     AsyncStorage.getItem("endless_stage")
@@ -75,17 +103,40 @@ export default function MainMenu({
     ]).start();
   }, []);
 
+  // Drives the lives countdown and the daily challenge "next reset" label.
+  // 1s tick is cheap and only runs while the menu is mounted.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (isFirstCrownRef.current) { isFirstCrownRef.current = false; return; }
     crownBump.setValue(1.7);
     Animated.spring(crownBump, { toValue: 1, friction: 3, tension: 350, useNativeDriver: true }).start();
   }, [crowns]);
 
-  function devResetFirstLaunch() {
-    onResetTutorial?.();
-  }
+  useEffect(() => {
+    if (isFirstLivesRef.current) { isFirstLivesRef.current = false; return; }
+    heartBump.setValue(1.5);
+    Animated.spring(heartBump, { toValue: 1, friction: 3, tension: 350, useNativeDriver: true }).start();
+  }, [lives.count]);
+
+  const unread = unreadCount(mailbox);
+  useEffect(() => {
+    if (unread > 0) {
+      Animated.sequence([
+        Animated.timing(mailBump, { toValue: 1.15, duration: 220, useNativeDriver: true }),
+        Animated.spring(mailBump, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [unread]);
 
   const sceneIndex = stageImageIndex(gardenState);
+  const canPlay = lives.count > 0;
+  const livesCountdownMs = msUntilNextLife(lives, now);
+  const livesCountdown = livesCountdownMs > 0 ? formatCountdown(livesCountdownMs) : null;
+  const dailyResetIn = formatHMS(msUntilTomorrow(now));
 
   return (
     <SceneBackground index={sceneIndex} style={ms.root}>
@@ -94,22 +145,56 @@ export default function MainMenu({
       {/* Ambient life drifts across the whole scene */}
       <AmbientLife w={SCREEN_W} h={SCREEN_H} />
 
-      {/* Crown badge — fixed top right (DEV: tap to add 10 crowns) */}
-      <TouchableOpacity
-        style={ms.topBar}
-        activeOpacity={__DEV__ ? 0.7 : 1}
-        onPress={() => { if (__DEV__) onDebugAddCrowns?.(10); }}
-      >
-        <Text style={ms.crownEmoji}>👑</Text>
-        <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>{crowns}</Animated.Text>
-      </TouchableOpacity>
-
-      {/* DEV — wipe all game data & restart onboarding (dev builds only) */}
-      {__DEV__ && (
-        <TouchableOpacity style={ms.devBtn} onPress={devResetFirstLaunch} activeOpacity={0.7}>
-          <Text style={ms.devBtnText}>↺ reset all</Text>
+      {/* ── Top-left cluster: settings + lives ───────────────────────────── */}
+      <View style={ms.topLeft}>
+        <TouchableOpacity
+          style={ms.iconBtn}
+          onPress={() => setSettingsOpen(true)}
+          activeOpacity={0.75}
+          hitSlop={8}
+        >
+          <Text style={ms.iconBtnGlyph}>⚙</Text>
         </TouchableOpacity>
-      )}
+
+        <Animated.View style={[ms.livesPill, { transform: [{ scale: heartBump }] }]}>
+          <Text style={ms.heartGlyph}>❤️</Text>
+          <Text style={ms.livesCount}>{lives.count}</Text>
+          <Text style={ms.livesMax}>/{MAX_LIVES}</Text>
+          {livesCountdown && (
+            <Text style={ms.livesTimer}>  {livesCountdown}</Text>
+          )}
+        </Animated.View>
+      </View>
+
+      {/* ── Top-right cluster: mailbox + crowns ──────────────────────────── */}
+      <View style={ms.topRight}>
+        <Animated.View style={{ transform: [{ scale: mailBump }] }}>
+          <TouchableOpacity
+            style={ms.iconBtn}
+            onPress={() => setMailOpen(true)}
+            activeOpacity={0.75}
+            hitSlop={8}
+          >
+            <Text style={ms.iconBtnGlyph}>✉️</Text>
+            {unread > 0 && (
+              <View style={ms.badge}>
+                <Text style={ms.badgeText}>{unread > 9 ? "9+" : unread}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
+
+        <TouchableOpacity
+          style={ms.crownPill}
+          activeOpacity={__DEV__ ? 0.7 : 1}
+          onPress={() => { if (__DEV__) onDebugAddCrowns?.(10); }}
+        >
+          <Text style={ms.crownEmoji}>👑</Text>
+          <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>
+            {crowns}
+          </Animated.Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Bottom UI floats over the garden background */}
       <Animated.View
@@ -121,21 +206,86 @@ export default function MainMenu({
           onInvest={onInvestGarden}
         />
 
+        {/* ── Daily challenge card ──────────────────────────────────────── */}
+        <DailyChallengeCard
+          completed={dailyCompletedToday}
+          resetIn={dailyResetIn}
+          disabled={!canPlay}
+          onPress={() => canPlay && onPlay(endlessStage, "endless")}
+        />
+
+        {/* ── Play button (gated on lives) ──────────────────────────────── */}
         <TouchableOpacity
-          style={ms.playBtn}
-          onPress={() => onPlay(endlessStage, "endless")}
-          activeOpacity={0.82}
+          style={[ms.playBtn, !canPlay && ms.playBtnDisabled]}
+          onPress={() => canPlay && onPlay(endlessStage, "endless")}
+          activeOpacity={canPlay ? 0.82 : 1}
         >
           <View style={{ alignItems: "flex-start" }}>
-            <Text style={ms.playBtnText}>{endlessStage > 1 ? "Continue" : "Play"}</Text>
-            {endlessStage > 1 && (
+            <Text style={ms.playBtnText}>
+              {canPlay ? (endlessStage > 1 ? "Continue" : "Play") : "Out of lives"}
+            </Text>
+            {canPlay && endlessStage > 1 && (
               <Text style={ms.playBtnSub}>Stage {endlessStage} · earn crowns to grow</Text>
             )}
+            {!canPlay && livesCountdown && (
+              <Text style={ms.playBtnSub}>Next heart in {livesCountdown}</Text>
+            )}
           </View>
-          <Text style={ms.playBtnArrow}>→</Text>
+          <Text style={ms.playBtnArrow}>{canPlay ? "→" : "❤"}</Text>
         </TouchableOpacity>
       </Animated.View>
+
+      <Settings
+        visible={settingsOpen}
+        soundOn={soundOn}
+        hapticsOn={hapticsOn}
+        onToggleSound={onToggleSound}
+        onToggleHaptics={onToggleHaptics}
+        onResetTutorial={onResetTutorial}
+        onClose={() => setSettingsOpen(false)}
+      />
+
+      <Mailbox
+        visible={mailOpen}
+        messages={mailbox}
+        onClaim={onClaimMail}
+        onClose={() => setMailOpen(false)}
+      />
     </SceneBackground>
+  );
+}
+
+// ─── Daily challenge card ─────────────────────────────────────────────────────
+
+function DailyChallengeCard({
+  completed, resetIn, disabled, onPress,
+}: {
+  completed: boolean;
+  resetIn: string;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[ms.dailyCard, completed && ms.dailyCardDone]}
+      activeOpacity={completed || disabled ? 1 : 0.85}
+      onPress={completed || disabled ? undefined : onPress}
+    >
+      <View style={ms.dailyIconWrap}>
+        <Text style={ms.dailyIcon}>{completed ? "✓" : "🎯"}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={ms.dailyTitle}>Daily Challenge</Text>
+        {completed ? (
+          <Text style={ms.dailySub}>Done · resets in {resetIn}</Text>
+        ) : (
+          <Text style={ms.dailySub}>
+            Play one stage today · +{DAILY_BONUS_CROWNS} 👑 · +{DAILY_BONUS_LIVES} ❤
+          </Text>
+        )}
+      </View>
+      {!completed && !disabled && <Text style={ms.dailyChevron}>→</Text>}
+    </TouchableOpacity>
   );
 }
 
@@ -181,20 +331,37 @@ function SceneBackground({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
+const TOP_OFFSET = Platform.OS === "android" ? 56 : 72;
+
 const ms = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
 
-  topBar: {
+  topLeft: {
     position: "absolute",
-    top: Platform.OS === "android" ? 76 : 92,
-    right: 22,
+    top: TOP_OFFSET,
+    left: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 10,
+    zIndex: 10,
+  },
+  topRight: {
+    position: "absolute",
+    top: TOP_OFFSET,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    zIndex: 10,
+  },
+
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: C.white,
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(26,29,46,0.08)",
     shadowColor: "rgba(26,29,46,1)",
@@ -202,10 +369,63 @@ const ms = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 3,
-    zIndex: 10,
   },
-  crownEmoji: { fontSize: 17 },
-  crownCount: { fontSize: 16, fontWeight: "900", color: C.ink },
+  iconBtnGlyph: { fontSize: 18, color: C.ink },
+
+  badge: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: C.coral,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: C.white,
+  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
+
+  livesPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: C.white,
+    borderRadius: 16,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(26,29,46,0.08)",
+    shadowColor: "rgba(26,29,46,1)",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  heartGlyph: { fontSize: 14, marginRight: 5 },
+  livesCount: { fontSize: 15, fontWeight: "900", color: C.ink },
+  livesMax: { fontSize: 12, fontWeight: "700", color: C.inkSoft, marginLeft: 1 },
+  livesTimer: { fontSize: 12, fontWeight: "700", color: C.inkSoft, fontVariant: ["tabular-nums"] },
+
+  crownPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: C.white,
+    borderRadius: 16,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(26,29,46,0.08)",
+    shadowColor: "rgba(26,29,46,1)",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  crownEmoji: { fontSize: 15 },
+  crownCount: { fontSize: 15, fontWeight: "900", color: C.ink },
 
   bottom: {
     position: "absolute",
@@ -214,8 +434,40 @@ const ms = StyleSheet.create({
     bottom: 0,
     paddingHorizontal: 22,
     paddingBottom: Platform.OS === "android" ? 28 : 40,
-    gap: 14,
+    gap: 12,
   },
+
+  dailyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: C.white,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "rgba(26,29,46,0.08)",
+    shadowColor: "rgba(26,29,46,1)",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  dailyCardDone: {
+    opacity: 0.85,
+  },
+  dailyIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: C.tealSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dailyIcon: { fontSize: 18, color: C.teal, fontWeight: "900" },
+  dailyTitle: { fontSize: 14, fontWeight: "900", color: C.ink, letterSpacing: 0.2 },
+  dailySub: { fontSize: 12, color: C.inkSoft, marginTop: 2 },
+  dailyChevron: { fontSize: 18, color: C.inkSoft, fontWeight: "600" },
 
   playBtn: {
     backgroundColor: C.coral,
@@ -231,6 +483,11 @@ const ms = StyleSheet.create({
     shadowOpacity: 0.40,
     shadowRadius: 16,
     elevation: 8,
+  },
+  playBtnDisabled: {
+    backgroundColor: C.ghost,
+    shadowColor: "rgba(26,29,46,1)",
+    shadowOpacity: 0.2,
   },
   playBtnText: {
     color: "#fff",
@@ -249,16 +506,4 @@ const ms = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-
-  devBtn: {
-    position: "absolute",
-    top: Platform.OS === "android" ? 36 : 52,
-    left: 16,
-    backgroundColor: "rgba(26,29,46,0.08)",
-    borderRadius: 10,
-    paddingVertical: 5,
-    paddingHorizontal: 9,
-    zIndex: 10,
-  },
-  devBtnText: { fontSize: 11, fontWeight: "600", color: C.inkSoft },
 });
