@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Animated, StatusBar, Platform, Dimensions,
+  Animated, AppState, StatusBar, Platform, Dimensions,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { GameMode } from "../App";
@@ -104,10 +104,24 @@ export default function MainMenu({
   }, []);
 
   // Drives the lives countdown and the daily challenge "next reset" label.
-  // 1s tick is cheap and only runs while the menu is mounted.
+  // Paused while backgrounded — the labels are derived from Date.now(), so a
+  // single update on foreground snaps the display back to current.
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id !== null) return;
+      setNow(Date.now());
+      id = setInterval(() => setNow(Date.now()), 1000);
+    };
+    const stop = () => {
+      if (id !== null) { clearInterval(id); id = null; }
+    };
+
+    if (AppState.currentState === "active") start();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") start(); else stop();
+    });
+    return () => { stop(); sub.remove(); };
   }, []);
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 // Garden meta: restore-the-garden progression
 import React, { useState, useEffect, useRef } from "react";
-import { Animated, View } from "react-native";
+import { Animated, AppState, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
@@ -103,16 +103,31 @@ export default function App() {
     if (loaded) AsyncStorage.setItem("daily_challenge_date", dailyDate);
   }, [dailyDate, loaded]);
 
-  // Wall-clock lives regen. 1s cadence keeps the timer display in step with the
-  // menu, and the setter is a no-op when nothing changed.
+  // Wall-clock lives regen. The interval only runs while the app is active so we
+  // don't burn battery in the background; the regen math reads Date.now() so a
+  // single tick on foreground catches up however long we were away.
   useEffect(() => {
-    const id = setInterval(() => {
+    let id: ReturnType<typeof setInterval> | null = null;
+    const tick = () => {
       setLives((prev) => {
         const next = tickRegen(prev);
         return next === prev ? prev : next;
       });
-    }, 1000);
-    return () => clearInterval(id);
+    };
+    const start = () => {
+      if (id !== null) return;
+      tick();
+      id = setInterval(tick, 1000);
+    };
+    const stop = () => {
+      if (id !== null) { clearInterval(id); id = null; }
+    };
+
+    if (AppState.currentState === "active") start();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") start(); else stop();
+    });
+    return () => { stop(); sub.remove(); };
   }, []);
 
   function handleInvestGarden() {
