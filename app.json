@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "numbermatch-rn",
-    "slug": "numbermatch-rn",
+    "name": "Number Match",
+    "slug": "number-match",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -28,16 +28,21 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.POST_NOTIFICATIONS"
       ],
-      "package": "com.anonymous.numbermatchrn"
+      "package": "com.mithatcanturan.numbermatch"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-audio",
+      [
+        "expo-notifications",
+        {
+          "color": "#ec7458"
+        }
+      ],
       [
         "react-native-google-mobile-ads",
         {
