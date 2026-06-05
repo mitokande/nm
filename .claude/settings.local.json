@@ -33,7 +33,8 @@
       "Bash(node -e \"const p=require\\('posthog-react-native/package.json'\\); process.stdout.write\\(p.types||p.typings||'lib/index.d.ts'\\)\")",
       "Bash(grep -E 'export \\(class|declare class|default|interface PostHog|class PostHog|\\\\{\\)' node_modules/posthog-react-native/__TRACKED_VAR__)",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('app.json','utf8'\\)\\); console.log\\('OK'\\)\")",
-      "Bash(EXPO_NO_TELEMETRY=1 npx expo config --type public)"
+      "Bash(EXPO_NO_TELEMETRY=1 npx expo config --type public)",
+      "Bash(grep -rA6 \"interface PaidEvent\" node_modules/react-native-google-mobile-ads/lib/typescript)"
     ]
   },
   "model": "claude-opus-4-7"

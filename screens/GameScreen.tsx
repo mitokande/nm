@@ -11,6 +11,7 @@ import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
 import Constants from "expo-constants";
 import levelsJson from "./levels.json";
+import { track, captureError, onStorageError } from "./telemetry";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-native-reanimated";
 
@@ -369,10 +370,38 @@ export default function GameScreen({
   const scoreTargetRef = useRef({ x: SCREEN_W / 4, y: 80 });
   const rewardedAdRef = useRef<any>(null);
 
+  // ── Analytics: run lifecycle ────────────────────────────────────────────────
+  // A "run" spans this screen session (one life spent in App). It ends when the
+  // player leaves to the menu. Mirror live stage/score in a ref so run_ended and
+  // the mount-time ad listeners read current values, not stale closures.
+  const runStartRef = useRef(Date.now());
+  const runEndedRef = useRef(false);
+  const liveRef = useRef({ stage, score });
+  liveRef.current = { stage, score };
+
+  type RunOutcome = "win" | "timeup" | "stuck" | "quit";
+  function endRun(outcome: RunOutcome) {
+    if (runEndedRef.current || mode === "tutorial") return;
+    runEndedRef.current = true;
+    track("run_ended", {
+      mode,
+      stage: liveRef.current.stage,
+      score: liveRef.current.score,
+      outcome,
+      duration_ms: Date.now() - runStartRef.current,
+    });
+  }
+  function handleExit(outcome: RunOutcome) {
+    endRun(outcome);
+    onBack();
+  }
+
   useEffect(() => {
     return () => {
       if (comboTimerRef.current) clearTimeout(comboTimerRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
+      // Fallback for unmounts that bypass an explicit exit (App nav / error boundary).
+      endRun("quit");
     };
   }, []);
 
@@ -420,41 +449,52 @@ export default function GameScreen({
           : Platform.OS === "android"
             ? "ca-app-pub-4604843322018757/9772661819"
             : "ca-app-pub-4604843322018757/2967656297";
-        console.log("[ads] creating rewarded ad", { adUnitId, platform: Platform.OS, dev: __DEV__ });
 
         const ad = admob.RewardedAd.createForAdRequest(adUnitId, {
           requestNonPersonalizedAdsOnly: true,
         });
 
         unsubs.push(ad.addAdEventListener(admob.RewardedAdEventType.LOADED, () => {
-          console.log("[ads] LOADED");
           setAdLoaded(true);
+          track("ad_loaded", { placement: "add_row" });
         }));
         unsubs.push(ad.addAdEventListener(admob.AdEventType.ERROR, (err: any) => {
-          console.log("[ads] ERROR", err?.code, err?.message, err);
           setAdLoaded(false);
+          track("ad_failed", { reason: "load_error", code: err?.code, message: err?.message });
         }));
         unsubs.push(ad.addAdEventListener(admob.AdEventType.OPENED, () => {
-          console.log("[ads] OPENED");
+          track("ad_shown", { placement: "add_row", mode, stage: liveRef.current.stage });
         }));
         unsubs.push(ad.addAdEventListener(admob.AdEventType.CLOSED, () => {
-          console.log("[ads] CLOSED → reloading");
           setAdLoaded(false);
+          track("ad_closed", { placement: "add_row" });
+          track("ad_requested", { placement: "reload" });
           ad.load();
+        }));
+        unsubs.push(ad.addAdEventListener(admob.AdEventType.PAID, (payload: any) => {
+          // Impression-level ad revenue — the core ad ARPDAU signal.
+          track("ad_impression", {
+            value: payload?.value,
+            currency: payload?.currency,
+            precision: payload?.precision,
+            ad_format: "rewarded",
+            placement: "add_row",
+          });
         }));
         unsubs.push(ad.addAdEventListener(
           admob.RewardedAdEventType.EARNED_REWARD,
           (reward: any) => {
-            console.log("[ads] EARNED_REWARD", reward);
+            track("ad_reward_earned", { reward_type: reward?.type, reward_amount: reward?.amount, placement: "add_row" });
+            track("booster_used", { key: "addrow", source: "ad", mode, stage: liveRef.current.stage });
             performAddRow();
           },
         ));
 
         rewardedAdRef.current = ad;
-        console.log("[ads] calling ad.load()");
+        track("ad_requested", { placement: "preload" });
         ad.load();
       } catch (e) {
-        console.log("[ads] init/setup failed", e);
+        captureError(e, { kind: "admob_init" });
       }
     })();
 
@@ -488,7 +528,7 @@ export default function GameScreen({
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     if (score > bestScore) {
       setBestScore(score);
-      AsyncStorage.setItem("hiscore_timeattack", String(score));
+      AsyncStorage.setItem("hiscore_timeattack", String(score)).catch(onStorageError("hiscore_timeattack"));
     }
   }, [timeUp]);
 
@@ -496,7 +536,7 @@ export default function GameScreen({
     const key = mode === "timeattack" ? "hiscore_timeattack" : mode === "freeze" ? `hiscore_freeze_${stage}` : `hiscore_${stage}`;
     AsyncStorage.getItem(key).then((val) => {
       setBestScore(val !== null ? parseInt(val, 10) : 0);
-    });
+    }).catch(onStorageError("hiscore_read"));
   }, [stage, mode]);
 
   useEffect(() => {
@@ -736,10 +776,11 @@ export default function GameScreen({
       playSound("stage_win", 0.85);
       if (mode !== "tutorial") {
         onCrownsEarned(1);
+        track("stage_complete", { mode, stage, score });
         if (score > bestScore) {
           setBestScore(score);
           const key = mode === "freeze" ? `hiscore_freeze_${stage}` : `hiscore_${stage}`;
-          AsyncStorage.setItem(key, String(score));
+          AsyncStorage.setItem(key, String(score)).catch(onStorageError("hiscore"));
         }
       }
     }
@@ -751,6 +792,7 @@ export default function GameScreen({
     if (rem === 0 && cells.length > 0 && clearingRows.length === 0) {
       setTimeLeft((t) => Math.min(t + 15, 120));
       onCrownsEarned(1);
+      track("stage_complete", { mode: "timeattack", stage, score });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       showToast("Board cleared!  +15s", "win", 1800);
@@ -775,9 +817,10 @@ export default function GameScreen({
       wonRef.current = true;
       setStageComplete(true);
       onCrownsEarned(1);
+      track("stage_complete", { mode: "golden", stage, score });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
-      AsyncStorage.setItem(`golden_done_${stage}`, "1");
+      AsyncStorage.setItem(`golden_done_${stage}`, "1").catch(onStorageError("golden_done"));
     }
   }, [collected, mode, targets]);
 
@@ -1003,6 +1046,7 @@ export default function GameScreen({
     if (!tStage) return;
     const nextStep = tutStep + 1;
     setTutStep(nextStep);
+    track("tutorial_step", { stage, step: nextStep });
     if (nextStep >= tStage.steps.length) {
       // Stage 4 leaves leftover cells after Add Row, so force completion here
       // instead of waiting for the rem===0 effect.
@@ -1050,12 +1094,13 @@ export default function GameScreen({
     }
     if (adds > 0) {
       setAdds((n) => n - 1);
+      track("booster_used", { key: "addrow", source: "inventory", mode, stage });
       performAddRow();
       return;
     }
     const ad = rewardedAdRef.current;
     if (!ad) {
-      console.log("rewardedAdRef", rewardedAdRef);
+      track("ad_failed", { reason: "no_ad_object", placement: "add_row" });
       showToast("Ads not available", "warn");
       return;
     }
@@ -1063,7 +1108,9 @@ export default function GameScreen({
       ad.show();
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      track("ad_failed", { reason: "not_ready", placement: "add_row" });
       showToast("Ad not ready — try again", "warn");
+      track("ad_requested", { placement: "retry" });
       ad.load();
     }
   }
@@ -1106,6 +1153,7 @@ export default function GameScreen({
     playSound("hint", 0.7);
     setHintPair(pair);
     setHints((n) => n - 1);
+    track("hint_used", { mode, stage, hints_left: hints - 1 });
     setTimeout(() => setHintPair(null), 2400);
   }
 
@@ -1118,8 +1166,8 @@ export default function GameScreen({
         "golden_stage";
       AsyncStorage.getItem(key).then((prev) => {
         const prevNum = prev ? parseInt(prev, 10) : 1;
-        if (s > prevNum) AsyncStorage.setItem(key, String(s));
-      });
+        if (s > prevNum) AsyncStorage.setItem(key, String(s)).catch(onStorageError(key));
+      }).catch(onStorageError(key));
       onStageAdvance?.(mode, s);
     }
     setCells(buildCellsForMode(s, mode));
@@ -1223,7 +1271,7 @@ export default function GameScreen({
 
       {/* Header */}
       <View style={gs.header}>
-        <TouchableOpacity style={gs.iconBtn} onPress={onBack} activeOpacity={0.75}>
+        <TouchableOpacity style={gs.iconBtn} onPress={() => handleExit("quit")} activeOpacity={0.75}>
           <Text style={gs.iconBtnText}>←</Text>
         </TouchableOpacity>
         <View style={gs.titleRow}>
@@ -1602,7 +1650,7 @@ export default function GameScreen({
             <TouchableOpacity style={gs.secondaryBtn} onPress={() => { setPaused(false); startStage(stage); }} activeOpacity={0.8}>
               <Text style={gs.secondaryBtnText}>↺  Restart Stage</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={gs.ghostBtn} onPress={() => { setPaused(false); onBack(); }} activeOpacity={0.8}>
+            <TouchableOpacity style={gs.ghostBtn} onPress={() => { setPaused(false); handleExit("quit"); }} activeOpacity={0.8}>
               <Text style={gs.ghostBtnText}>← Main Menu</Text>
             </TouchableOpacity>
           </View>
@@ -1718,7 +1766,7 @@ export default function GameScreen({
                       : (stage < 6 ? "Next Stage →" : "Play Again")}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={gs.ghostBtn} onPress={onBack} activeOpacity={0.8}>
+                <TouchableOpacity style={gs.ghostBtn} onPress={() => handleExit("win")} activeOpacity={0.8}>
                   <Text style={gs.ghostBtnText}>← Main Menu</Text>
                 </TouchableOpacity>
               </>
@@ -1749,7 +1797,7 @@ export default function GameScreen({
             <TouchableOpacity style={gs.primaryBtn} onPress={() => startStage(1)} activeOpacity={0.8}>
               <Text style={gs.primaryBtnText}>↺  Play Again</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={gs.ghostBtn} onPress={onBack} activeOpacity={0.8}>
+            <TouchableOpacity style={gs.ghostBtn} onPress={() => handleExit("timeup")} activeOpacity={0.8}>
               <Text style={gs.ghostBtnText}>← Main Menu</Text>
             </TouchableOpacity>
           </View>
@@ -1770,7 +1818,7 @@ export default function GameScreen({
             <TouchableOpacity style={gs.primaryBtn} onPress={() => startStage(stage)} activeOpacity={0.8}>
               <Text style={gs.primaryBtnText}>↺  Restart Stage</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={gs.ghostBtn} onPress={onBack} activeOpacity={0.8}>
+            <TouchableOpacity style={gs.ghostBtn} onPress={() => handleExit("stuck")} activeOpacity={0.8}>
               <Text style={gs.ghostBtnText}>← Main Menu</Text>
             </TouchableOpacity>
           </View>
