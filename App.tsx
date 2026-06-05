@@ -27,11 +27,20 @@ import { setMuted } from "./screens/sound";
 import {
   requestPermission, scheduleLivesFull, scheduleDailyChallenge, scheduleDailyLogin,
 } from "./screens/notifications";
+import {
+  initTelemetry, identify, track, screenView, captureError,
+  onStorageError, flushTelemetry, withSentry,
+} from "./screens/telemetry";
+import { getInstallId } from "./screens/installId";
+import ErrorBoundary from "./screens/ErrorBoundary";
+
+// Initialize crash reporting + analytics as early as possible (before first render).
+initTelemetry();
 
 type Screen = "menu" | "game";
 export type GameMode = "endless" | "golden" | "timeattack" | "freeze" | "tutorial";
 
-export default function App() {
+function App() {
   const [screen, setScreen] = useState<Screen>("menu");
   const [currentStage, setCurrentStage] = useState(1);
   const [mode, setMode] = useState<GameMode>("endless");
@@ -86,7 +95,7 @@ export default function App() {
       }
       if (mailSeeded !== "1") {
         setMailbox(todaysSeed());
-        AsyncStorage.setItem("mailbox_seeded", "1").catch(() => {});
+        AsyncStorage.setItem("mailbox_seeded", "1").catch(onStorageError("mailbox_seeded"));
       } else if (mailVal) {
         try { setMailbox(normalizeMailbox(JSON.parse(mailVal))); } catch {}
       }
@@ -112,40 +121,54 @@ export default function App() {
         setScreen("game");
       }
       setLoaded(true);
-    }).catch(() => setLoaded(true));
+    }).catch((e) => { captureError(e, { kind: "hydrate" }); setLoaded(true); });
   }, []);
 
+  // Analytics: record app open and bind the anonymous install id.
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("crowns", String(crowns));
+    track("app_open");
+    getInstallId()
+      .then((id) => identify(id))
+      .catch((e) => captureError(e, { kind: "install_id" }));
+  }, []);
+
+  // Fire a screen_view on the initial render and every screen change.
+  useEffect(() => {
+    if (loaded) screenView(screen);
+  }, [screen, loaded]);
+
+  useEffect(() => {
+    if (loaded) AsyncStorage.setItem("crowns", String(crowns)).catch(onStorageError("crowns"));
   }, [crowns, loaded]);
 
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("garden_state", JSON.stringify(gardenState));
+    if (loaded) AsyncStorage.setItem("garden_state", JSON.stringify(gardenState)).catch(onStorageError("garden_state"));
   }, [gardenState, loaded]);
 
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("lives_state", JSON.stringify(lives));
+    if (loaded) AsyncStorage.setItem("lives_state", JSON.stringify(lives)).catch(onStorageError("lives_state"));
   }, [lives, loaded]);
 
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("mailbox", JSON.stringify(mailbox));
+    if (loaded) AsyncStorage.setItem("mailbox", JSON.stringify(mailbox)).catch(onStorageError("mailbox"));
   }, [mailbox, loaded]);
 
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("daily_challenge_date", dailyDate);
+    if (loaded) AsyncStorage.setItem("daily_challenge_date", dailyDate).catch(onStorageError("daily_challenge_date"));
   }, [dailyDate, loaded]);
 
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("daily_login_state", JSON.stringify(dailyLogin));
+    if (loaded) AsyncStorage.setItem("daily_login_state", JSON.stringify(dailyLogin)).catch(onStorageError("daily_login_state"));
   }, [dailyLogin, loaded]);
 
   useEffect(() => {
-    if (loaded) AsyncStorage.setItem("boosters", JSON.stringify(boosters));
+    if (loaded) AsyncStorage.setItem("boosters", JSON.stringify(boosters)).catch(onStorageError("boosters"));
   }, [boosters, loaded]);
 
   // Wall-clock lives regen. The interval only runs while the app is active so we
   // don't burn battery in the background; the regen math reads Date.now() so a
-  // single tick on foreground catches up however long we were away.
+  // single tick on foreground catches up however long we were away. We also flush
+  // queued analytics on the way to the background.
   useEffect(() => {
     let id: ReturnType<typeof setInterval> | null = null;
     const tick = () => {
@@ -165,7 +188,8 @@ export default function App() {
 
     if (AppState.currentState === "active") start();
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") start(); else stop();
+      if (state === "active") start();
+      else { stop(); flushTelemetry(); }
     });
     return () => { stop(); sub.remove(); };
   }, []);
@@ -192,12 +216,12 @@ export default function App() {
       const asked = await AsyncStorage.getItem("notifications_asked");
       if (asked === "1") return;
       const granted = await requestPermission();
-      AsyncStorage.setItem("notifications_asked", "1").catch(() => {});
+      AsyncStorage.setItem("notifications_asked", "1").catch(onStorageError("notifications_asked"));
       if (!granted) {
         setNotifyOn(false);
-        AsyncStorage.setItem("notifications_enabled", "0").catch(() => {});
+        AsyncStorage.setItem("notifications_enabled", "0").catch(onStorageError("notifications_enabled"));
       }
-    })();
+    })().catch((e) => captureError(e, { kind: "notif_permission" }));
   }, [loaded, needsTutorial, notifyOn]);
 
   function handleInvestGarden() {
@@ -205,6 +229,7 @@ export default function App() {
     if (result.spent > 0) {
       setCrowns((c) => Math.max(0, c - result.spent));
       setGardenState(result.next);
+      track("garden_invested", { spent: result.spent, restored: result.next.restored });
     }
   }
 
@@ -225,15 +250,26 @@ export default function App() {
         reward: { crowns: DAILY_BONUS_CROWNS, lives: DAILY_BONUS_LIVES },
         claimed: true,
       }));
+      track("daily_challenge_complete", { bonus_crowns: DAILY_BONUS_CROWNS, bonus_lives: DAILY_BONUS_LIVES });
     }
   }
 
   function handleClaimMail(id: string) {
+    // Pre-compute the reward off current state so the analytics event fires once
+    // (state-updater bodies are re-invoked under StrictMode in dev).
+    const target = mailbox.find((m) => m.id === id);
+    if (target && !target.claimed && target.reward) {
+      track("mailbox_claimed", {
+        id,
+        crowns: target.reward.crowns ?? 0,
+        lives: target.reward.lives ?? 0,
+      });
+    }
     setMailbox((box) => {
-      const target = box.find((m) => m.id === id);
-      if (!target || target.claimed) return box.map((m) => (m.id === id ? { ...m, read: true } : m));
-      if (target.reward?.crowns) setCrowns((c) => c + (target.reward!.crowns ?? 0));
-      if (target.reward?.lives) setLives((l) => grantLives(l, target.reward!.lives ?? 0));
+      const t = box.find((m) => m.id === id);
+      if (!t || t.claimed) return box.map((m) => (m.id === id ? { ...m, read: true } : m));
+      if (t.reward?.crowns) setCrowns((c) => c + (t.reward!.crowns ?? 0));
+      if (t.reward?.lives) setLives((l) => grantLives(l, t.reward!.lives ?? 0));
       return box.map((m) => (m.id === id ? { ...m, claimed: true, read: true } : m));
     });
   }
@@ -244,6 +280,7 @@ export default function App() {
     setDailyLogin(next);
     if (reward.crowns) setCrowns((c) => c + (reward.crowns ?? 0));
     if (reward.lives) setLives((l) => grantLives(l, reward.lives ?? 0));
+    track("daily_login_claimed", { crowns: reward.crowns ?? 0, lives: reward.lives ?? 0 });
   }
 
   function handleBuyBooster(key: "hint" | "addrow") {
@@ -252,23 +289,27 @@ export default function App() {
     if (boosters[key] >= MAX_BOOSTERS) return;
     setCrowns((c) => c - cost);
     setBoosters((b) => ({ ...b, [key]: b[key] + 1 }));
+    track("booster_purchased", { key, cost });
   }
 
   function handleToggleSound(next: boolean) {
     setSoundOn(next);
     setMuted(!next);
-    AsyncStorage.setItem("sound_muted", next ? "0" : "1").catch(() => {});
+    AsyncStorage.setItem("sound_muted", next ? "0" : "1").catch(onStorageError("sound_muted"));
+    track("settings_toggled", { setting: "sound", value: next });
   }
 
   function handleToggleHaptics(next: boolean) {
     setHapticsOn(next);
-    AsyncStorage.setItem("haptics_enabled", next ? "1" : "0").catch(() => {});
+    AsyncStorage.setItem("haptics_enabled", next ? "1" : "0").catch(onStorageError("haptics_enabled"));
+    track("settings_toggled", { setting: "haptics", value: next });
   }
 
   function handleToggleNotifications(next: boolean) {
     setNotifyOn(next);
-    AsyncStorage.setItem("notifications_enabled", next ? "1" : "0").catch(() => {});
-    if (next) requestPermission().catch(() => {});
+    AsyncStorage.setItem("notifications_enabled", next ? "1" : "0").catch(onStorageError("notifications_enabled"));
+    if (next) requestPermission().catch((e) => captureError(e, { kind: "request_permission" }));
+    track("settings_toggled", { setting: "notifications", value: next });
   }
 
   // Per-mode stage updates pushed up from GameScreen so the menu tiles stay
@@ -277,13 +318,13 @@ export default function App() {
     if (m === "golden") {
       setGoldenStage((prev) => {
         const next = Math.max(prev, stage);
-        if (next !== prev) AsyncStorage.setItem("golden_stage", String(next)).catch(() => {});
+        if (next !== prev) AsyncStorage.setItem("golden_stage", String(next)).catch(onStorageError("golden_stage"));
         return next;
       });
     } else if (m === "freeze") {
       setFreezeStage((prev) => {
         const next = Math.max(prev, stage);
-        if (next !== prev) AsyncStorage.setItem("freeze_stage", String(next)).catch(() => {});
+        if (next !== prev) AsyncStorage.setItem("freeze_stage", String(next)).catch(onStorageError("freeze_stage"));
         return next;
       });
     }
@@ -295,14 +336,21 @@ export default function App() {
     const effectiveStage = effectiveMode === "tutorial" ? 1 : stage;
     // Real runs cost one life. Tutorial is free so onboarding can't hard-block.
     if (newScreen === "game" && effectiveMode !== "tutorial") {
-      if (lives.count <= 0) return;
+      if (lives.count <= 0) {
+        track("lives_depleted");
+        return;
+      }
       setLives((l) => spendLife(l));
       // Hand off owned boosters once. Zeroing here means a tap to "Continue" on
       // the same run can't double-use them.
       setBonusBoosters(boosters);
       setBoosters(defaultBoosters());
+      track("run_started", { mode: effectiveMode, stage: effectiveStage });
     } else {
       setBonusBoosters(defaultBoosters());
+      if (newScreen === "game" && effectiveMode === "tutorial") {
+        track("run_started", { mode: "tutorial", stage: effectiveStage });
+      }
     }
     Animated.timing(fadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
       setCurrentStage(effectiveStage);
@@ -314,14 +362,15 @@ export default function App() {
 
   function handleTutorialComplete() {
     setNeedsTutorial(false);
-    AsyncStorage.setItem("onboarding_done", "1");
+    AsyncStorage.setItem("onboarding_done", "1").catch(onStorageError("onboarding_done"));
+    track("tutorial_complete");
     navigateTo("menu");
   }
 
   async function handleResetTutorial() {
     // DEV: wipe ALL persisted game data (crowns, garden, high scores,
     // endless progress, golden completions, onboarding) and reset memory.
-    try { await AsyncStorage.clear(); } catch {}
+    try { await AsyncStorage.clear(); } catch (e) { captureError(e, { kind: "storage_clear" }); }
     setCrowns(0);
     setGardenState(defaultGardenState());
     setLives(defaultLivesState());
@@ -331,7 +380,7 @@ export default function App() {
     setBoosters(defaultBoosters());
     setGoldenStage(1);
     setFreezeStage(1);
-    AsyncStorage.setItem("mailbox_seeded", "1").catch(() => {});
+    AsyncStorage.setItem("mailbox_seeded", "1").catch(onStorageError("mailbox_seeded"));
     setNeedsTutorial(true);
     navigateTo("game", 1, "tutorial");
   }
@@ -350,44 +399,50 @@ export default function App() {
       needsOffscreenAlphaCompositing
     >
       {screen === "game" ? (
-        <GameScreen
-          initialStage={currentStage}
-          mode={mode}
-          crowns={crowns}
-          bonusHints={bonusBoosters.hint}
-          bonusAdds={bonusBoosters.addrow}
-          onCrownsEarned={handleCrownsEarned}
-          onStageAdvance={handleStageAdvance}
-          onBack={() => navigateTo("menu")}
-          onTutorialComplete={handleTutorialComplete}
-        />
+        <ErrorBoundary label="game" onReset={() => navigateTo("menu")}>
+          <GameScreen
+            initialStage={currentStage}
+            mode={mode}
+            crowns={crowns}
+            bonusHints={bonusBoosters.hint}
+            bonusAdds={bonusBoosters.addrow}
+            onCrownsEarned={handleCrownsEarned}
+            onStageAdvance={handleStageAdvance}
+            onBack={() => navigateTo("menu")}
+            onTutorialComplete={handleTutorialComplete}
+          />
+        </ErrorBoundary>
       ) : (
-        <MainMenu
-          crowns={crowns}
-          gardenState={gardenState}
-          lives={lives}
-          mailbox={mailbox}
-          dailyCompletedToday={dailyDate === todayKey()}
-          dailyLogin={dailyLogin}
-          boosters={boosters}
-          goldenStage={goldenStage}
-          freezeStage={freezeStage}
-          soundOn={soundOn}
-          hapticsOn={hapticsOn}
-          notifyOn={notifyOn}
-          onInvestGarden={handleInvestGarden}
-          onDebugAddCrowns={(amount) => setCrowns((c) => c + amount)}
-          onPlay={(stage, m) => navigateTo("game", stage, m)}
-          onClaimMail={handleClaimMail}
-          onClaimDailyLogin={handleClaimDailyLogin}
-          onBuyBooster={handleBuyBooster}
-          onToggleSound={handleToggleSound}
-          onToggleHaptics={handleToggleHaptics}
-          onToggleNotifications={handleToggleNotifications}
-          onResetTutorial={handleResetTutorial}
-        />
+        <ErrorBoundary label="menu">
+          <MainMenu
+            crowns={crowns}
+            gardenState={gardenState}
+            lives={lives}
+            mailbox={mailbox}
+            dailyCompletedToday={dailyDate === todayKey()}
+            dailyLogin={dailyLogin}
+            boosters={boosters}
+            goldenStage={goldenStage}
+            freezeStage={freezeStage}
+            soundOn={soundOn}
+            hapticsOn={hapticsOn}
+            notifyOn={notifyOn}
+            onInvestGarden={handleInvestGarden}
+            onDebugAddCrowns={(amount) => setCrowns((c) => c + amount)}
+            onPlay={(stage, m) => navigateTo("game", stage, m)}
+            onClaimMail={handleClaimMail}
+            onClaimDailyLogin={handleClaimDailyLogin}
+            onBuyBooster={handleBuyBooster}
+            onToggleSound={handleToggleSound}
+            onToggleHaptics={handleToggleHaptics}
+            onToggleNotifications={handleToggleNotifications}
+            onResetTutorial={handleResetTutorial}
+          />
+        </ErrorBoundary>
       )}
     </Animated.View>
     </GestureHandlerRootView>
   );
 }
+
+export default withSentry(App);

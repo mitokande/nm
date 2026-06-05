@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Number Match",
-    "slug": "number-match",
+    "slug": "numbermatch-rn",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -36,7 +36,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
       [
         "expo-notifications",
         {
@@ -49,12 +55,24 @@
           "androidAppId": "ca-app-pub-4604843322018757~6145619448",
           "iosAppId": "ca-app-pub-4604843322018757~1702676089"
         }
-      ]
+      ],
+      [
+        "@sentry/react-native",
+        {
+          "organization": "softchain-solutions",
+          "project": "number-match",
+          "url": "https://de.sentry.io/"
+        }
+      ],
+      "expo-localization"
     ],
     "extra": {
       "eas": {
         "projectId": "a211c348-5ff9-4efc-98d8-8f5d4a89f67b"
-      }
+      },
+      "sentryDsn": "https://9c471cf5c61e6479e52fbc5ed82f5c54@o4511513336807424.ingest.de.sentry.io/4511513345785936",
+      "posthogApiKey": "phc_totEwRAFmE3bBPtGyeUDrkr3Uw8bqnBTTsaC4F5NJibS",
+      "posthogHost": "https://eu.i.posthog.com"
     }
   }
 }
