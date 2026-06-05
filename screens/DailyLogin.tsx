@@ -49,7 +49,7 @@ export default function DailyLogin({ visible, state, onClaim, onClose }: Props) 
   }, [visible]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent hardwareAccelerated statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <View style={s.scrim}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
         <Animated.View style={[s.sheet, { transform: [{ scale: sheetScale }], opacity: sheetOpacity }]}>

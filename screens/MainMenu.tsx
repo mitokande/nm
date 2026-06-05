@@ -11,7 +11,7 @@ import {
   LivesState, MAX_LIVES, msUntilNextLife, formatCountdown,
 } from "./livesData";
 import {
-  msUntilTomorrow, formatHMS, DAILY_BONUS_CROWNS, DAILY_BONUS_LIVES,
+  msUntilTomorrow, formatHMS,
 } from "./dailyChallenge";
 import { MailMessage, unreadCount } from "./mailboxData";
 import { DailyLoginState, canClaimToday } from "./dailyLogin";
@@ -19,8 +19,8 @@ import { Boosters } from "./boosters";
 import Settings from "./Settings";
 import Mailbox from "./Mailbox";
 import DailyLogin from "./DailyLogin";
-import ModeTiles from "./ModeTiles";
-import BoosterShelf from "./BoosterShelf";
+import BoosterSheet from "./BoosterSheet";
+import SideBadge from "./SideBadge";
 
 // Full-screen garden scenes, indexed by stageImageIndex (number of areas restored).
 // 0 = barren, then one image per restored area up to fully restored.
@@ -50,6 +50,7 @@ const C = {
   crown: "#d9a648",
   freeze: "#3a9fdf",
   heart: "#e35d6a",
+  golden: "#d9a648",
 };
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -93,6 +94,7 @@ export default function MainMenu({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mailOpen, setMailOpen] = useState(false);
   const [dailyLoginOpen, setDailyLoginOpen] = useState(false);
+  const [boosterOpen, setBoosterOpen] = useState(false);
   const dailyAutoPoppedRef = useRef(false);
   const [now, setNow] = useState(Date.now());
 
@@ -112,11 +114,13 @@ export default function MainMenu({
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(24)).current;
+  const railFade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 11, useNativeDriver: true }),
+      Animated.timing(railFade, { toValue: 1, duration: 600, delay: 180, useNativeDriver: true }),
     ]).start();
   }, []);
 
@@ -179,6 +183,7 @@ export default function MainMenu({
   const livesCountdownMs = msUntilNextLife(lives, now);
   const livesCountdown = livesCountdownMs > 0 ? formatCountdown(livesCountdownMs) : null;
   const dailyResetIn = formatHMS(msUntilTomorrow(now));
+  const totalBoosters = boosters.hint + boosters.addrow;
 
   return (
     <SceneBackground index={sceneIndex} style={ms.root}>
@@ -187,31 +192,8 @@ export default function MainMenu({
       {/* Ambient life drifts across the whole scene */}
       <AmbientLife w={SCREEN_W} h={SCREEN_H} />
 
-      {/* ── Top-left cluster: settings + daily reward + lives ────────────── */}
+      {/* ── Top-left cluster: lives + crowns (resources) ─────────────────── */}
       <View style={ms.topLeft}>
-        <TouchableOpacity
-          style={ms.iconBtn}
-          onPress={() => setSettingsOpen(true)}
-          activeOpacity={0.75}
-          hitSlop={8}
-        >
-          <Text style={ms.iconBtnGlyph}>⚙</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={ms.iconBtn}
-          onPress={() => setDailyLoginOpen(true)}
-          activeOpacity={0.75}
-          hitSlop={8}
-        >
-          <Text style={ms.iconBtnGlyph}>🎁</Text>
-          {dailyClaimable && (
-            <View style={ms.badge}>
-              <Text style={ms.badgeText}>!</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
         <Animated.View style={[ms.livesPill, { transform: [{ scale: heartBump }] }]}>
           <Text style={ms.heartGlyph}>❤️</Text>
           <Text style={ms.livesCount}>{lives.count}</Text>
@@ -220,9 +202,20 @@ export default function MainMenu({
             <Text style={ms.livesTimer}>  {livesCountdown}</Text>
           )}
         </Animated.View>
+
+        <TouchableOpacity
+          style={ms.crownPill}
+          activeOpacity={__DEV__ ? 0.7 : 1}
+          onPress={() => { if (__DEV__) onDebugAddCrowns?.(10); }}
+        >
+          <Text style={ms.crownEmoji}>👑</Text>
+          <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>
+            {crowns}
+          </Animated.Text>
+        </TouchableOpacity>
       </View>
 
-      {/* ── Top-right cluster: mailbox + crowns ──────────────────────────── */}
+      {/* ── Top-right cluster: mailbox + settings ────────────────────────── */}
       <View style={ms.topRight}>
         <Animated.View style={{ transform: [{ scale: mailBump }] }}>
           <TouchableOpacity
@@ -241,18 +234,83 @@ export default function MainMenu({
         </Animated.View>
 
         <TouchableOpacity
-          style={ms.crownPill}
-          activeOpacity={__DEV__ ? 0.7 : 1}
-          onPress={() => { if (__DEV__) onDebugAddCrowns?.(10); }}
+          style={ms.iconBtn}
+          onPress={() => setSettingsOpen(true)}
+          activeOpacity={0.75}
+          hitSlop={8}
         >
-          <Text style={ms.crownEmoji}>👑</Text>
-          <Animated.Text style={[ms.crownCount, { transform: [{ scale: crownBump }] }]}>
-            {crowns}
-          </Animated.Text>
+          <Text style={ms.iconBtnGlyph}>⚙</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Bottom UI floats over the garden background */}
+      {/* ── Left rail: time-gated events ─────────────────────────────────── */}
+      <Animated.View
+        style={[ms.leftRail, { opacity: railFade, transform: [{ translateX: railFade.interpolate({ inputRange: [0, 1], outputRange: [-30, 0] }) }] }]}
+        pointerEvents="box-none"
+      >
+        {dailyClaimable && (
+          <SideBadge
+            icon="🎁"
+            label="Daily"
+            tint={C.crown}
+            dot
+            pulse
+            onPress={() => setDailyLoginOpen(true)}
+          />
+        )}
+        <SideBadge
+          icon="🎯"
+          label="Challenge"
+          tint={C.teal}
+          done={dailyCompletedToday}
+          dot={!dailyCompletedToday}
+          disabled={!canPlay}
+          onPress={() => onPlay(endlessStage, "endless")}
+        />
+      </Animated.View>
+
+      {/* ── Right rail: game modes + shop ────────────────────────────────── */}
+      <Animated.View
+        style={[ms.rightRail, { opacity: railFade, transform: [{ translateX: railFade.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }] }]}
+        pointerEvents="box-none"
+      >
+        <SideBadge
+          icon="💎"
+          label="Golden"
+          chip={`S${goldenStage}`}
+          tint={C.golden}
+          chipColor={C.golden}
+          disabled={!canPlay}
+          onPress={() => onPlay(goldenStage, "golden")}
+        />
+        <SideBadge
+          icon="⚡"
+          label="Time"
+          chip="60s"
+          tint={C.coral}
+          chipColor={C.coral}
+          disabled={!canPlay}
+          onPress={() => onPlay(1, "timeattack")}
+        />
+        <SideBadge
+          icon="🧊"
+          label="Freeze"
+          chip={`S${freezeStage}`}
+          tint={C.freeze}
+          chipColor={C.freeze}
+          disabled={!canPlay}
+          onPress={() => onPlay(freezeStage, "freeze")}
+        />
+        <SideBadge
+          icon="🛒"
+          label="Shop"
+          chip={totalBoosters > 0 ? `×${totalBoosters}` : undefined}
+          tint={C.ink}
+          onPress={() => setBoosterOpen(true)}
+        />
+      </Animated.View>
+
+      {/* ── Bottom: garden card + dominant play button ───────────────────── */}
       <Animated.View
         style={[ms.bottom, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
@@ -262,43 +320,24 @@ export default function MainMenu({
           onInvest={onInvestGarden}
         />
 
-        {/* ── Daily challenge card ──────────────────────────────────────── */}
-        <DailyChallengeCard
-          completed={dailyCompletedToday}
-          resetIn={dailyResetIn}
-          disabled={!canPlay}
-          onPress={() => canPlay && onPlay(endlessStage, "endless")}
-        />
-
-        {/* ── Booster shelf ─────────────────────────────────────────────── */}
-        <BoosterShelf boosters={boosters} crowns={crowns} onBuy={onBuyBooster} />
-
-        {/* ── Secondary mode tiles ──────────────────────────────────────── */}
-        <ModeTiles
-          goldenStage={goldenStage}
-          freezeStage={freezeStage}
-          disabled={!canPlay}
-          onPlay={onPlay}
-        />
-
-        {/* ── Play button (gated on lives) ──────────────────────────────── */}
         <TouchableOpacity
           style={[ms.playBtn, !canPlay && ms.playBtnDisabled]}
           onPress={() => canPlay && onPlay(endlessStage, "endless")}
           activeOpacity={canPlay ? 0.82 : 1}
         >
-          <View style={{ alignItems: "flex-start" }}>
+          <View style={ms.playBtnInner}>
             <Text style={ms.playBtnText}>
-              {canPlay ? (endlessStage > 1 ? "Continue" : "Play") : "Out of lives"}
+              {canPlay ? (endlessStage > 1 ? "CONTINUE" : "PLAY") : "OUT OF LIVES"}
             </Text>
-            {canPlay && endlessStage > 1 && (
-              <Text style={ms.playBtnSub}>Stage {endlessStage} · earn crowns to grow</Text>
-            )}
-            {!canPlay && livesCountdown && (
-              <Text style={ms.playBtnSub}>Next heart in {livesCountdown}</Text>
-            )}
+            <Text style={ms.playBtnSub}>
+              {canPlay
+                ? (endlessStage > 1 ? `Stage ${endlessStage}` : "Tap to start")
+                : livesCountdown ? `Next heart in ${livesCountdown}` : "Wait for hearts"}
+            </Text>
           </View>
-          <Text style={ms.playBtnArrow}>{canPlay ? "→" : "❤"}</Text>
+          <View style={ms.playBtnArrowWrap}>
+            <Text style={ms.playBtnArrow}>{canPlay ? "▶" : "❤"}</Text>
+          </View>
         </TouchableOpacity>
       </Animated.View>
 
@@ -332,41 +371,15 @@ export default function MainMenu({
         }}
         onClose={() => setDailyLoginOpen(false)}
       />
+
+      <BoosterSheet
+        visible={boosterOpen}
+        boosters={boosters}
+        crowns={crowns}
+        onBuy={onBuyBooster}
+        onClose={() => setBoosterOpen(false)}
+      />
     </SceneBackground>
-  );
-}
-
-// ─── Daily challenge card ─────────────────────────────────────────────────────
-
-function DailyChallengeCard({
-  completed, resetIn, disabled, onPress,
-}: {
-  completed: boolean;
-  resetIn: string;
-  disabled: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      style={[ms.dailyCard, completed && ms.dailyCardDone]}
-      activeOpacity={completed || disabled ? 1 : 0.85}
-      onPress={completed || disabled ? undefined : onPress}
-    >
-      <View style={ms.dailyIconWrap}>
-        <Text style={ms.dailyIcon}>{completed ? "✓" : "🎯"}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={ms.dailyTitle}>Daily Challenge</Text>
-        {completed ? (
-          <Text style={ms.dailySub}>Done · resets in {resetIn}</Text>
-        ) : (
-          <Text style={ms.dailySub}>
-            Play one stage today · +{DAILY_BONUS_CROWNS} 👑 · +{DAILY_BONUS_LIVES} ❤
-          </Text>
-        )}
-      </View>
-      {!completed && !disabled && <Text style={ms.dailyChevron}>→</Text>}
-    </TouchableOpacity>
   );
 }
 
@@ -413,6 +426,8 @@ function SceneBackground({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const TOP_OFFSET = Platform.OS === "android" ? 56 : 72;
+// Side rails sit above the bottom UI (garden card + play button + padding).
+const RAIL_BOTTOM = Platform.OS === "android" ? 250 : 262;
 
 const ms = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
@@ -423,7 +438,7 @@ const ms = StyleSheet.create({
     left: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
     zIndex: 10,
   },
   topRight: {
@@ -432,7 +447,7 @@ const ms = StyleSheet.create({
     right: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
     zIndex: 10,
   },
 
@@ -508,6 +523,21 @@ const ms = StyleSheet.create({
   crownEmoji: { fontSize: 15 },
   crownCount: { fontSize: 15, fontWeight: "900", color: C.ink },
 
+  leftRail: {
+    position: "absolute",
+    left: 12,
+    bottom: RAIL_BOTTOM,
+    gap: 10,
+    zIndex: 9,
+  },
+  rightRail: {
+    position: "absolute",
+    right: 12,
+    bottom: RAIL_BOTTOM,
+    gap: 10,
+    zIndex: 9,
+  },
+
   bottom: {
     position: "absolute",
     left: 0,
@@ -515,76 +545,55 @@ const ms = StyleSheet.create({
     bottom: 0,
     paddingHorizontal: 22,
     paddingBottom: Platform.OS === "android" ? 28 : 40,
-    gap: 12,
+    gap: 14,
   },
-
-  dailyCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: C.white,
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: "rgba(26,29,46,0.08)",
-    shadowColor: "rgba(26,29,46,1)",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  dailyCardDone: {
-    opacity: 0.85,
-  },
-  dailyIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.tealSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dailyIcon: { fontSize: 18, color: C.teal, fontWeight: "900" },
-  dailyTitle: { fontSize: 14, fontWeight: "900", color: C.ink, letterSpacing: 0.2 },
-  dailySub: { fontSize: 12, color: C.inkSoft, marginTop: 2 },
-  dailyChevron: { fontSize: 18, color: C.inkSoft, fontWeight: "600" },
 
   playBtn: {
     backgroundColor: C.coral,
-    borderRadius: 18,
-    paddingVertical: 18,
-    paddingHorizontal: 28,
+    borderRadius: 22,
+    paddingVertical: 16,
+    paddingHorizontal: 22,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
     gap: 10,
     shadowColor: C.coral,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.40,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    elevation: 10,
   },
   playBtnDisabled: {
     backgroundColor: C.ghost,
     shadowColor: "rgba(26,29,46,1)",
     shadowOpacity: 0.2,
   },
+  playBtnInner: { flex: 1, alignItems: "flex-start" },
   playBtnText: {
     color: "#fff",
     fontWeight: "900",
-    fontSize: 20,
-    letterSpacing: 0.5,
-  },
-  playBtnArrow: {
-    color: "rgba(255,255,255,0.75)",
-    fontWeight: "400",
     fontSize: 22,
+    letterSpacing: 1.2,
   },
   playBtnSub: {
-    color: "rgba(255,255,255,0.7)",
-    fontWeight: "500",
+    color: "rgba(255,255,255,0.78)",
+    fontWeight: "700",
     fontSize: 12,
     marginTop: 2,
+    letterSpacing: 0.3,
+  },
+  playBtnArrowWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  playBtnArrow: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 16,
+    marginLeft: 2,
   },
 });

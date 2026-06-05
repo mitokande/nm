@@ -1592,7 +1592,7 @@ export default function GameScreen({
       </View>
 
       {/* Pause Modal */}
-      <Modal visible={paused} transparent animationType="fade">
+      <Modal visible={paused} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
         <View style={gs.overlay}>
           <View style={gs.card}>
             <Text style={gs.cardTitle}>Paused</Text>
@@ -1610,7 +1610,7 @@ export default function GameScreen({
       </Modal>
 
       {/* Stage Complete Modal */}
-      <Modal visible={stageComplete} transparent animationType="fade">
+      <Modal visible={stageComplete} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
         <View style={gs.overlay}>
           <View style={gs.card}>
             {mode === "tutorial" ? (
@@ -1728,7 +1728,7 @@ export default function GameScreen({
       </Modal>
 
       {/* Time's Up Modal */}
-      <Modal visible={timeUp} transparent animationType="fade">
+      <Modal visible={timeUp} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
         <View style={gs.overlay}>
           <View style={gs.card}>
             <Text style={[gs.winEmoji, { color: C.danger }]}>⏱</Text>
@@ -1757,7 +1757,7 @@ export default function GameScreen({
       </Modal>
 
       {/* No Moves Modal */}
-      <Modal visible={noMoves && mode !== "timeattack"} transparent animationType="fade">
+      <Modal visible={noMoves && mode !== "timeattack"} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
         <View style={gs.overlay}>
           <View style={gs.card}>
             <Text style={[gs.winEmoji, { color: C.danger }]}>✕</Text>

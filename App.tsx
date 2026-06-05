@@ -343,8 +343,12 @@ export default function App() {
   if (!loaded) return <View style={{ flex: 1, backgroundColor: "#f5efe6" }} />;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-    <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#f5efe6" }}>
+    <Animated.View
+      style={{ flex: 1, backgroundColor: "#f5efe6", opacity: fadeAnim }}
+      renderToHardwareTextureAndroid
+      needsOffscreenAlphaCompositing
+    >
       {screen === "game" ? (
         <GameScreen
           initialStage={currentStage}
