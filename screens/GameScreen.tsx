@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, Animated, Easing, Dimensions, StatusBar, Modal, Platform,
+  ScrollView, Animated, Easing, Dimensions, StatusBar, Modal, Platform, AppState,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -24,8 +24,13 @@ interface FreezeStage { id: number; values: number[]; frozenIndices: number[]; }
 const STAGES: Record<number, number[]> = Object.fromEntries(
   levelsJson.endless.map((s) => [s.id, s.values])
 );
+// Sorted endless stage ids. ENDLESS_MAX is the last reachable stage (drives the
+// "Next Stage / Play Again" cap); ENDLESS_IDS is also the Time-Attack rotation.
+const ENDLESS_IDS: number[] = Object.keys(STAGES).map(Number).sort((a, b) => a - b);
+const ENDLESS_MAX = ENDLESS_IDS[ENDLESS_IDS.length - 1] ?? 1;
 
 const FREEZE_STAGES: FreezeStage[] = levelsJson.freeze;
+const FREEZE_MAX = FREEZE_STAGES.reduce((m, s) => Math.max(m, s.id), 1);
 
 const GOLDEN_STAGES: GoldenStage[] = levelsJson.golden.map((g) => ({
   id: g.id,
@@ -261,7 +266,7 @@ function CountUp({ to, visible, style, duration = 950 }: {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const { width: SCREEN_W } = Dimensions.get("window");
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const BOARD_H_PAD = 4;
 // gs.root padding — the floating drag tile is an absolute child of gs.root, so
 // its (0,0) origin sits inside this padding. Subtract it to align the tile with
@@ -273,6 +278,67 @@ const ROOT_PAD_LEFT = 6;
 const CELL_SIZE = Math.floor((SCREEN_W - BOARD_H_PAD * 2 - ROOT_PAD_LEFT * 2) / COLS);
 const CELL_RADIUS = Math.round(CELL_SIZE * 0.16);
 const ROOT_PAD_TOP = Platform.OS === "android" ? 36 : 52;
+
+// ─── Celebration ──────────────────────────────────────────────────────────────
+// One-shot confetti burst for stage-complete wins. Pure Animated (native driver),
+// pointer-transparent, self-contained — mounting it plays the animation once.
+const CONFETTI_COLORS = ["#ec7458", "#3e9d8f", "#d9a648", "#5baa7a", "#3a9fdf", "#f4c64a"];
+
+function Celebration() {
+  const pieces = useRef(
+    Array.from({ length: 20 }, (_, i) => ({
+      key: i,
+      left: Math.random() * SCREEN_W,
+      size: 7 + Math.random() * 7,
+      color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+      delay: Math.random() * 300,
+      drift: (Math.random() - 0.5) * 90,
+      spin: (Math.random() > 0.5 ? 1 : -1) * (1 + Math.random()),
+      anim: new Animated.Value(0),
+    })),
+  ).current;
+
+  useEffect(() => {
+    Animated.parallel(
+      pieces.map((p) =>
+        Animated.timing(p.anim, {
+          toValue: 1,
+          duration: 1600 + Math.random() * 700,
+          delay: p.delay,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ),
+    ).start();
+  }, []);
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {pieces.map((p) => {
+        const translateY = p.anim.interpolate({ inputRange: [0, 1], outputRange: [-40, SCREEN_H * 0.92] });
+        const translateX = p.anim.interpolate({ inputRange: [0, 1], outputRange: [0, p.drift] });
+        const rotate = p.anim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", `${p.spin * 360}deg`] });
+        const opacity = p.anim.interpolate({ inputRange: [0, 0.78, 1], outputRange: [1, 1, 0] });
+        return (
+          <Animated.View
+            key={p.key}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: p.left,
+              width: p.size,
+              height: p.size * 1.4,
+              borderRadius: 2,
+              backgroundColor: p.color,
+              opacity,
+              transform: [{ translateY }, { translateX }, { rotate }],
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
 
 export default function GameScreen({
   initialStage, mode, crowns,
@@ -320,6 +386,11 @@ export default function GameScreen({
   const [clearingRows, setClearingRows] = useState<number[]>([]);
   const [bestScore, setBestScore] = useState(0);
   const [noMoves, setNoMoves] = useState(false);
+  // Golden soft-lock: the No Moves modal is up because the remaining gem tiles can
+  // no longer satisfy the goals (adds won't help), so we hide the "+5 adds" offer.
+  const [softLock, setSoftLock] = useState(false);
+  // First-entry micro-tutorial overlay for Golden / Freeze.
+  const [modeIntro, setModeIntro] = useState(false);
   const [matchLine, setMatchLine] = useState<[number, number] | null>(null);
   const [matchIsSame, setMatchIsSame] = useState(true);
   const [thawingCells, setThawingCells] = useState<number[]>([]);
@@ -374,6 +445,12 @@ export default function GameScreen({
   // a double-tap can't fire two interstitial+startStage runs, and so Double Crowns
   // can't be tapped while the interstitial is mid-flight. Reset in startStage.
   const leavingRef = useRef(false);
+  // Time-Attack board rotation index into ENDLESS_IDS (cycles boards per clear).
+  const taBoardRef = useRef(0);
+  // True only while a Time-Attack run is actively playable — gates the
+  // background auto-pause so we don't stack it on a win/time-up modal.
+  const bgPausableRef = useRef(false);
+  bgPausableRef.current = mode === "timeattack" && !timeUp && !stageComplete && !paused;
 
   // ── Analytics: run lifecycle ────────────────────────────────────────────────
   // A "run" spans this screen session (one life spent in App). It ends when the
@@ -710,7 +787,9 @@ export default function GameScreen({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       showToast("Board cleared!  +15s", "win", 1800);
-      setCells(buildCells(STAGES[1]));
+      // Rotate through the endless boards instead of re-seeding stage 1 forever.
+      taBoardRef.current = (taBoardRef.current + 1) % ENDLESS_IDS.length;
+      setCells(buildCells(STAGES[ENDLESS_IDS[taBoardRef.current]]));
       setDestroyedRows([]);
       setSelected(null);
       setHintPair(null);
@@ -737,6 +816,44 @@ export default function GameScreen({
       AsyncStorage.setItem(`golden_done_${stage}`, "1").catch(onStorageError("golden_done"));
     }
   }, [collected, mode, targets]);
+
+  // Golden soft-lock: if any goal can no longer be met (collected + the gem tiles
+  // still on the board < target), the stage is unwinnable. Adds duplicate values
+  // but never gems, so this is terminal — pop the No Moves modal early. Only check
+  // a settled board (no pop/clear animation in flight) to avoid a transient miscount.
+  useEffect(() => {
+    if (mode !== "golden" || wonRef.current || stageComplete || noMoves) return;
+    if (poppingPair !== null || clearingRows.length > 0) return;
+    const targetKeys = Object.keys(targets) as GemType[];
+    if (targetKeys.length === 0) return;
+    const reachable = targetKeys.every((k) => {
+      const onBoard = cells.filter((c) => c.active && c.gem === k).length;
+      return (collected[k] ?? 0) + onBoard >= (targets[k] ?? 0);
+    });
+    if (!reachable) {
+      playSound("no_moves", 0.7);
+      setSoftLock(true);
+      setNoMoves(true);
+    }
+  }, [cells, collected, targets, mode, stageComplete, noMoves, poppingPair, clearingRows]);
+
+  // Auto-pause Time Attack when the app is backgrounded so the countdown doesn't
+  // run while away (otherwise the player returns to a "Time's Up" they didn't lose).
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active" && bgPausableRef.current) setPaused(true);
+    });
+    return () => sub.remove();
+  }, []);
+
+  // First-entry micro-tutorial overlay for Golden / Freeze (one-step, AsyncStorage-gated).
+  useEffect(() => {
+    if (mode !== "golden" && mode !== "freeze") return;
+    const key = mode === "golden" ? "golden_intro_done" : "freeze_intro_done";
+    AsyncStorage.getItem(key)
+      .then((v) => { if (v !== "1") setModeIntro(true); })
+      .catch(onStorageError(key));
+  }, [mode]);
 
   function showToast(text: string, kind: "info" | "warn" | "win" = "info", ms = 1400) {
     setToast({ text, kind });
@@ -1143,6 +1260,7 @@ export default function GameScreen({
     setAdds(mode === "timeattack" ? 0 : mode === "tutorial" ? (s === 4 ? 1 : 0) : mode === "freeze" ? 7 : 5);
     setHints(mode === "tutorial" ? (s === 4 ? 1 : 0) : 2);
     setNoMoves(false);
+    setSoftLock(false);
     setMatchLine(null);
     setThawingCells([]);
     if (mode === "tutorial") {
@@ -1155,6 +1273,7 @@ export default function GameScreen({
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setTimeLeft(TIMEATTACK_START);
       setTimeUp(false);
+      taBoardRef.current = 0; // first TA board is stage 1; rotate from there
     }
   }
 
@@ -1615,6 +1734,7 @@ export default function GameScreen({
       {/* Stage Complete Modal */}
       <Modal visible={stageComplete} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
         <View style={gs.overlay}>
+          {stageComplete && mode !== "tutorial" && <Celebration key={stage} />}
           <View style={gs.card}>
             {mode === "tutorial" ? (
               <>
@@ -1715,7 +1835,8 @@ export default function GameScreen({
                       const nextId = i >= 0 && i < ids.length - 1 ? ids[i + 1] : ids[0];
                       startStage(nextId);
                     } else {
-                      startStage(stage < 6 ? stage + 1 : stage);
+                      const maxStage = mode === "freeze" ? FREEZE_MAX : ENDLESS_MAX;
+                      startStage(stage < maxStage ? stage + 1 : stage);
                     }
                   }}
                   activeOpacity={0.8}
@@ -1727,7 +1848,7 @@ export default function GameScreen({
                           const i = ids.indexOf(stage);
                           return i >= 0 && i < ids.length - 1 ? "Next Garden →" : "Play Again";
                         })()
-                      : (stage < 6 ? "Next Stage →" : "Play Again")}
+                      : (stage < (mode === "freeze" ? FREEZE_MAX : ENDLESS_MAX) ? "Next Stage →" : "Play Again")}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={gs.ghostBtn} onPress={() => handleExit("win")} activeOpacity={0.8}>
@@ -1776,15 +1897,19 @@ export default function GameScreen({
         <View style={gs.overlay}>
           <View style={gs.card}>
             <Text style={[gs.winEmoji, { color: C.danger }]}>✕</Text>
-            <Text style={gs.cardTitle}>No Moves Left</Text>
+            <Text style={gs.cardTitle}>{softLock ? "Goals Unreachable" : "No Moves Left"}</Text>
             <Text style={gs.howtoText}>
-              {mode === "golden"
+              {softLock
+                ? "The remaining gems can no longer complete this garden's goals."
+                : mode === "golden"
                 ? "No valid pairs remain and your goals aren't met yet."
                 : "No valid pairs remain and you're out of adds."}
             </Text>
-            <TouchableOpacity style={gs.secondaryBtn} onPress={handleContinueAdds} activeOpacity={0.85}>
-              <Text style={gs.secondaryBtnText}>📺  +5 Adds — Keep Going</Text>
-            </TouchableOpacity>
+            {!softLock && (
+              <TouchableOpacity style={gs.secondaryBtn} onPress={handleContinueAdds} activeOpacity={0.85}>
+                <Text style={gs.secondaryBtnText}>📺  +5 Adds — Keep Going</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={gs.primaryBtn}
               onPress={async () => {
@@ -1799,6 +1924,32 @@ export default function GameScreen({
             </TouchableOpacity>
             <TouchableOpacity style={gs.ghostBtn} onPress={() => handleExit("stuck")} activeOpacity={0.8}>
               <Text style={gs.ghostBtnText}>← Main Menu</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* First-entry micro-tutorial (Golden / Freeze) */}
+      <Modal visible={modeIntro} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
+        <View style={gs.overlay}>
+          <View style={gs.card}>
+            <Text style={gs.winEmoji}>{mode === "golden" ? "💎" : "🧊"}</Text>
+            <Text style={gs.cardTitle}>{mode === "golden" ? "Golden Garden" : "Frozen Board"}</Text>
+            <Text style={[gs.howtoText, { textAlign: "center", lineHeight: 22 }]}>
+              {mode === "golden"
+                ? "Match pairs to collect the gem tiles shown up top. Reach every goal to make the garden bloom!"
+                : "Match a tile next to a frozen one to thaw it. Clear the whole board to win."}
+            </Text>
+            <TouchableOpacity
+              style={gs.primaryBtn}
+              onPress={() => {
+                const key = mode === "golden" ? "golden_intro_done" : "freeze_intro_done";
+                AsyncStorage.setItem(key, "1").catch(onStorageError(key));
+                setModeIntro(false);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={gs.primaryBtnText}>Got it!</Text>
             </TouchableOpacity>
           </View>
         </View>
