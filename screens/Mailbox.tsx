@@ -57,7 +57,12 @@ export default function Mailbox({ visible, messages, onClaim, onClose }: Props) 
 }
 
 function MessageRow({ m, onClaim }: { m: MailMessage; onClaim: () => void }) {
-  const hasReward = !!(m.reward && ((m.reward.crowns ?? 0) > 0 || (m.reward.lives ?? 0) > 0));
+  const hasReward = !!(m.reward && (
+    (m.reward.crowns ?? 0) > 0 ||
+    (m.reward.lives ?? 0) > 0 ||
+    (m.reward.boosters?.hint ?? 0) > 0 ||
+    (m.reward.boosters?.addrow ?? 0) > 0
+  ));
   const claimable = hasReward && !m.claimed;
   return (
     <View style={s.card}>
@@ -79,6 +84,18 @@ function MessageRow({ m, onClaim }: { m: MailMessage; onClaim: () => void }) {
             <View style={s.chip}>
               <Text style={s.chipIcon}>❤️</Text>
               <Text style={s.chipText}>+{m.reward.lives}</Text>
+            </View>
+          ) : null}
+          {m.reward?.boosters?.hint ? (
+            <View style={s.chip}>
+              <Text style={s.chipIcon}>💡</Text>
+              <Text style={s.chipText}>+{m.reward.boosters.hint}</Text>
+            </View>
+          ) : null}
+          {m.reward?.boosters?.addrow ? (
+            <View style={s.chip}>
+              <Text style={s.chipIcon}>➕</Text>
+              <Text style={s.chipText}>+{m.reward.boosters.addrow}</Text>
             </View>
           ) : null}
           <View style={{ flex: 1 }} />

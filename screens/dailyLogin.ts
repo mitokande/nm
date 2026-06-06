@@ -3,11 +3,13 @@
 // keep coming back to receive the mega reward repeatedly.
 
 import { todayKey } from "./dailyChallenge";
+import { BoosterGift } from "./boosters";
 
 export interface DailyReward {
   day: number;          // 1..7
   crowns?: number;
   lives?: number;
+  boosters?: BoosterGift;
   mega?: boolean;       // styling hint
 }
 
@@ -16,9 +18,9 @@ export const DAILY_REWARDS: DailyReward[] = [
   { day: 2, crowns: 20 },
   { day: 3, lives: 1 },
   { day: 4, crowns: 30 },
-  { day: 5, lives: 2 },
+  { day: 5, lives: 2, boosters: { hint: 1 } },
   { day: 6, crowns: 40 },
-  { day: 7, crowns: 100, lives: 5, mega: true },
+  { day: 7, crowns: 100, lives: 5, boosters: { hint: 1, addrow: 1 }, mega: true },
 ];
 
 export interface DailyLoginState {

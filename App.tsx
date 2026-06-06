@@ -1,6 +1,6 @@
 // Garden meta: restore-the-garden progression
 import React, { useState, useEffect, useRef } from "react";
-import { Animated, AppState, View } from "react-native";
+import { Animated, AppState, View, Alert } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
@@ -21,8 +21,9 @@ import {
   DailyLoginState, defaultDailyLogin, normalizeDailyLogin, claim as claimDailyLogin,
 } from "./screens/dailyLogin";
 import {
-  Boosters, defaultBoosters, normalizeBoosters, BOOSTER_COST, MAX_BOOSTERS,
+  Boosters, defaultBoosters, normalizeBoosters, grantBoosters, BOOSTER_COST, MAX_BOOSTERS,
 } from "./screens/boosters";
+import { showRewarded, isRewardedReady } from "./screens/adManager";
 import { setMuted } from "./screens/sound";
 import {
   requestPermission, scheduleLivesFull, scheduleDailyChallenge, scheduleDailyLogin,
@@ -270,6 +271,7 @@ function App() {
       if (!t || t.claimed) return box.map((m) => (m.id === id ? { ...m, read: true } : m));
       if (t.reward?.crowns) setCrowns((c) => c + (t.reward!.crowns ?? 0));
       if (t.reward?.lives) setLives((l) => grantLives(l, t.reward!.lives ?? 0));
+      if (t.reward?.boosters) setBoosters((b) => grantBoosters(b, t.reward!.boosters));
       return box.map((m) => (m.id === id ? { ...m, claimed: true, read: true } : m));
     });
   }
@@ -280,6 +282,7 @@ function App() {
     setDailyLogin(next);
     if (reward.crowns) setCrowns((c) => c + (reward.crowns ?? 0));
     if (reward.lives) setLives((l) => grantLives(l, reward.lives ?? 0));
+    if (reward.boosters) setBoosters((b) => grantBoosters(b, reward.boosters));
     track("daily_login_claimed", { crowns: reward.crowns ?? 0, lives: reward.lives ?? 0 });
   }
 
@@ -330,6 +333,52 @@ function App() {
     }
   }
 
+  // The shared cross-fade between menu and game.
+  function enterScreen(newScreen: Screen, stage: number, m: GameMode) {
+    Animated.timing(fadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
+      setCurrentStage(stage);
+      setMode(m);
+      setScreen(newScreen);
+      Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+    });
+  }
+
+  // Spend a life, hand off owned boosters once (zeroing so a same-run "Continue"
+  // can't double-use them), and enter the game.
+  function beginRealRun(stage: number, m: GameMode) {
+    setLives((l) => spendLife(l));
+    setBonusBoosters(boosters);
+    setBoosters(defaultBoosters());
+    track("run_started", { mode: m, stage });
+    enterScreen("game", stage, m);
+  }
+
+  // Out of lives → offer a rewarded ad for +1 life. On reward we grant a life and
+  // immediately start the run; the grant/spend functional updates compose to a
+  // net zero, so the run begins with the freshly-earned life consumed.
+  function offerLifeForAd(stage: number, m: GameMode) {
+    if (!isRewardedReady()) {
+      Alert.alert("Out of lives", "Your lives refill over time — come back soon, or grab the daily reward.");
+      return;
+    }
+    Alert.alert("Out of lives", "Watch a short ad to get +1 life and keep playing?", [
+      { text: "Not now", style: "cancel" },
+      {
+        text: "Watch ad",
+        onPress: () => {
+          showRewarded("continue_life", { stage, mode: m }).then((res) => {
+            if (res.earned) {
+              setLives((l) => grantLives(l, 1));
+              beginRealRun(stage, m);
+            } else if (!res.shown) {
+              Alert.alert("Ad not ready", "Please try again in a moment.");
+            }
+          });
+        },
+      },
+    ]);
+  }
+
   function navigateTo(newScreen: Screen, stage = 1, m: GameMode = "endless") {
     // Intercept any game navigation if tutorial hasn't been completed yet
     const effectiveMode = (newScreen === "game" && needsTutorial && m !== "tutorial") ? "tutorial" : m;
@@ -338,26 +387,18 @@ function App() {
     if (newScreen === "game" && effectiveMode !== "tutorial") {
       if (lives.count <= 0) {
         track("lives_depleted");
+        offerLifeForAd(effectiveStage, effectiveMode);
         return;
       }
-      setLives((l) => spendLife(l));
-      // Hand off owned boosters once. Zeroing here means a tap to "Continue" on
-      // the same run can't double-use them.
-      setBonusBoosters(boosters);
-      setBoosters(defaultBoosters());
-      track("run_started", { mode: effectiveMode, stage: effectiveStage });
-    } else {
-      setBonusBoosters(defaultBoosters());
-      if (newScreen === "game" && effectiveMode === "tutorial") {
-        track("run_started", { mode: "tutorial", stage: effectiveStage });
-      }
+      beginRealRun(effectiveStage, effectiveMode);
+      return;
     }
-    Animated.timing(fadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
-      setCurrentStage(effectiveStage);
-      setMode(effectiveMode);
-      setScreen(newScreen);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }).start();
-    });
+    // Menu navigation, or the free tutorial run.
+    setBonusBoosters(defaultBoosters());
+    if (newScreen === "game" && effectiveMode === "tutorial") {
+      track("run_started", { mode: "tutorial", stage: effectiveStage });
+    }
+    enterScreen(newScreen, effectiveStage, effectiveMode);
   }
 
   function handleTutorialComplete() {

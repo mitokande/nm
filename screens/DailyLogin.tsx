@@ -103,7 +103,7 @@ function DayCell({
   day, reward, claimed, isToday, mega,
 }: {
   day: number;
-  reward: { crowns?: number; lives?: number; mega?: boolean };
+  reward: { crowns?: number; lives?: number; boosters?: { hint?: number; addrow?: number }; mega?: boolean };
   claimed: boolean;
   isToday: boolean;
   mega?: boolean;
@@ -145,6 +145,18 @@ function DayCell({
           <View style={[s.chip, s.chipHeart]}>
             <Text style={s.chipIcon}>❤️</Text>
             <Text style={s.chipText}>+{reward.lives}</Text>
+          </View>
+        ) : null}
+        {reward.boosters?.hint ? (
+          <View style={s.chip}>
+            <Text style={s.chipIcon}>💡</Text>
+            <Text style={s.chipText}>+{reward.boosters.hint}</Text>
+          </View>
+        ) : null}
+        {reward.boosters?.addrow ? (
+          <View style={s.chip}>
+            <Text style={s.chipIcon}>➕</Text>
+            <Text style={s.chipText}>+{reward.boosters.addrow}</Text>
           </View>
         ) : null}
       </View>

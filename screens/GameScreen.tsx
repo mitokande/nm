@@ -9,10 +9,9 @@ import { playSound } from "./sound";
 import { GEM_EMOJI, GEM_NAME, GemType, GoldenStage } from "./goldenStages";
 import { TUTORIAL_STAGES } from "./tutorialStages";
 import type { GameMode } from "../App";
-import Constants from "expo-constants";
 import levelsJson from "./levels.json";
-import { track, captureError, onStorageError } from "./telemetry";
-import { ensureAdConsent } from "./consent";
+import { track, onStorageError } from "./telemetry";
+import { ensureInitialized, showRewarded, maybeShowInterstitial } from "./adManager";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-native-reanimated";
 
@@ -298,7 +297,9 @@ export default function GameScreen({
   // naturally one-shot.
   const [adds, setAdds] = useState(5 + (bonusAdds ?? 0));
   const [hints, setHints] = useState(2 + (bonusHints ?? 0));
-  const [adLoaded, setAdLoaded] = useState(false);
+  // Whether the player has already claimed the "double crowns" rewarded ad for
+  // the current stage-complete (one claim per cleared stage).
+  const [crownDoubled, setCrownDoubled] = useState(false);
   const [hintPair, setHintPair] = useState<[number, number] | null>(() => {
     if (mode === "tutorial") {
       const t = TUTORIAL_STAGES.find((s) => s.id === initialStage) ?? TUTORIAL_STAGES[0];
@@ -369,7 +370,10 @@ export default function GameScreen({
   const dragMapSV = useSharedValue<number[]>([]);
   const scoreCardRef = useRef<View>(null);
   const scoreTargetRef = useRef({ x: SCREEN_W / 4, y: 80 });
-  const rewardedAdRef = useRef<any>(null);
+  // Guards the modal→next-board transition (stage-complete / no-moves restart) so
+  // a double-tap can't fire two interstitial+startStage runs, and so Double Crowns
+  // can't be tapped while the interstitial is mid-flight. Reset in startStage.
+  const leavingRef = useRef(false);
 
   // ── Analytics: run lifecycle ────────────────────────────────────────────────
   // A "run" spans this screen session (one life spent in App). It ends when the
@@ -406,119 +410,14 @@ export default function GameScreen({
     };
   }, []);
 
+  // Spin up ads (consent → SDK init → preload rewarded + interstitial) on the
+  // first real run. Skipped for the tutorial so the ATT/UMP prompts land at a
+  // warm moment, and the AdManager itself no-ops in Expo Go. It's a module-level
+  // singleton, so there's nothing to tear down on unmount.
   useEffect(() => {
-    let cancelled = false;
-    const unsubs: Array<() => void> = [];
-
-    // Expo Go has no native AdMob module — touching the require triggers a
-    // TurboModuleRegistry Invariant Violation in the logs. Bail out early.
-    if (Constants.appOwnership === "expo") {
-      console.log("[ads] running in Expo Go — skipping AdMob init");
-      return;
-    }
-
-    let admob: any;
-    try {
-      admob = require("react-native-google-mobile-ads");
-    } catch (e) {
-      console.log("[ads] native module not available (Expo Go?)", e);
-      return;
-    }
-
-    // In Expo Go the require may silently succeed but the native binding is absent.
-    // The TurboModuleRegistry Invariant Violation gets logged, then admob.default
-    // is undefined. Bail out before we try to call it.
-    if (!admob || typeof admob.default !== "function") {
-      console.log("[ads] module loaded but native binding missing — skipping (Expo Go?)");
-      return;
-    }
-
-    (async () => {
-      try {
-        // GDPR/US UMP consent + iOS ATT must resolve before init & first request
-        // so the SDK has the consent signal when it chooses ad fill.
-        const consent = await ensureAdConsent();
-        if (cancelled) return;
-
-        await admob.default()
-          .setRequestConfiguration({
-            // Lock inventory to general audiences; this app is not child-directed.
-            maxAdContentRating: admob.MaxAdContentRating.G,
-            tagForChildDirectedTreatment: false,
-            tagForUnderAgeOfConsent: false,
-            testDeviceIdentifiers: ["EMULATOR"],
-          })
-          .catch((e: any) => console.log("[ads] setRequestConfiguration failed", e));
-
-        const initStatus = await admob.default().initialize();
-        console.log("[ads] initialized", initStatus);
-        if (cancelled) return;
-
-        if (!consent.canRequestAds) {
-          console.log("[ads] consent not obtained — not requesting ads");
-          return;
-        }
-
-        const adUnitId = __DEV__
-          ? admob.TestIds.REWARDED
-          : Platform.OS === "android"
-            ? "ca-app-pub-4604843322018757/9772661819"
-            : "ca-app-pub-4604843322018757/2967656297";
-
-        const ad = admob.RewardedAd.createForAdRequest(adUnitId, {
-          requestNonPersonalizedAdsOnly: consent.nonPersonalizedOnly,
-        });
-
-        unsubs.push(ad.addAdEventListener(admob.RewardedAdEventType.LOADED, () => {
-          setAdLoaded(true);
-          track("ad_loaded", { placement: "add_row" });
-        }));
-        unsubs.push(ad.addAdEventListener(admob.AdEventType.ERROR, (err: any) => {
-          setAdLoaded(false);
-          track("ad_failed", { reason: "load_error", code: err?.code, message: err?.message });
-        }));
-        unsubs.push(ad.addAdEventListener(admob.AdEventType.OPENED, () => {
-          track("ad_shown", { placement: "add_row", mode, stage: liveRef.current.stage });
-        }));
-        unsubs.push(ad.addAdEventListener(admob.AdEventType.CLOSED, () => {
-          setAdLoaded(false);
-          track("ad_closed", { placement: "add_row" });
-          track("ad_requested", { placement: "reload" });
-          ad.load();
-        }));
-        unsubs.push(ad.addAdEventListener(admob.AdEventType.PAID, (payload: any) => {
-          // Impression-level ad revenue — the core ad ARPDAU signal.
-          track("ad_impression", {
-            value: payload?.value,
-            currency: payload?.currency,
-            precision: payload?.precision,
-            ad_format: "rewarded",
-            placement: "add_row",
-          });
-        }));
-        unsubs.push(ad.addAdEventListener(
-          admob.RewardedAdEventType.EARNED_REWARD,
-          (reward: any) => {
-            track("ad_reward_earned", { reward_type: reward?.type, reward_amount: reward?.amount, placement: "add_row" });
-            track("booster_used", { key: "addrow", source: "ad", mode, stage: liveRef.current.stage });
-            performAddRow();
-          },
-        ));
-
-        rewardedAdRef.current = ad;
-        track("ad_requested", { placement: "preload" });
-        ad.load();
-      } catch (e) {
-        captureError(e, { kind: "admob_init" });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      unsubs.forEach((u) => u());
-      rewardedAdRef.current = null;
-    };
-  }, []);
+    if (mode === "tutorial") return;
+    ensureInitialized();
+  }, [mode]);
 
   useEffect(() => {
     if (mode !== "timeattack") return;
@@ -1113,21 +1012,60 @@ export default function GameScreen({
       performAddRow();
       return;
     }
-    const ad = rewardedAdRef.current;
-    if (!ad) {
-      track("ad_failed", { reason: "no_ad_object", placement: "add_row" });
-      showToast("Ads not available", "warn");
-      return;
-    }
-    if (adLoaded) {
-      ad.show();
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      track("ad_failed", { reason: "not_ready", placement: "add_row" });
-      showToast("Ad not ready — try again", "warn");
-      track("ad_requested", { placement: "retry" });
-      ad.load();
-    }
+    // Out of inventory adds → offer a rewarded ad for one free row.
+    showRewarded("add_row", { mode, stage }).then((res) => {
+      if (res.earned) {
+        track("booster_used", { key: "addrow", source: "ad", mode, stage });
+        performAddRow();
+      } else if (!res.shown) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        showToast("Ad not ready — try again", "warn");
+      }
+    });
+  }
+
+  // ── Rewarded "Continue" slots ────────────────────────────────────────────────
+
+  // No more moves → watch an ad for 5 free adds and keep the current board.
+  function handleContinueAdds() {
+    showRewarded("continue_adds", { mode, stage }).then((res) => {
+      if (res.earned) {
+        setAdds((n) => n + 5);
+        setNoMoves(false);
+        track("booster_used", { key: "addrow", source: "ad_continue", mode, stage });
+        showToast("+5 adds — keep going!", "info", 1000);
+      } else if (!res.shown) {
+        showToast("Ad not ready — try again", "warn");
+      }
+    });
+  }
+
+  // Time attack ran out → watch an ad for +20s and resume the same board.
+  function handleContinueTime() {
+    showRewarded("continue_time", { mode, stage }).then((res) => {
+      if (res.earned) {
+        setTimeUp(false);
+        setTimeLeft((t) => t + 20);
+        showToast("+20 seconds!", "info", 1000);
+      } else if (!res.shown) {
+        showToast("Ad not ready — try again", "warn");
+      }
+    });
+  }
+
+  // Stage cleared → watch an ad to double the crowns earned this stage (once).
+  // Blocked once the player has started leaving the stage (interstitial in flight).
+  function handleDoubleCrowns() {
+    if (crownDoubled || leavingRef.current) return;
+    showRewarded("double_crowns", { mode, stage }).then((res) => {
+      if (res.earned) {
+        setCrownDoubled(true);
+        onCrownsEarned(1); // matches the single crown awarded on stage clear
+        showToast("Crowns doubled! ♛ +1", "info", 1100);
+      } else if (!res.shown) {
+        showToast("Ad not ready — try again", "warn");
+      }
+    });
   }
 
   function handleHint() {
@@ -1194,6 +1132,8 @@ export default function GameScreen({
     setHintPair(null);
     setCombo(0);
     setStageComplete(false);
+    setCrownDoubled(false);
+    leavingRef.current = false;
     setStage(s);
     setToast(null);
     setClearingRows([]);
@@ -1757,9 +1697,18 @@ export default function GameScreen({
                     </View>
                   </View>
                 )}
+                {!crownDoubled && (
+                  <TouchableOpacity style={gs.secondaryBtn} onPress={handleDoubleCrowns} activeOpacity={0.85}>
+                    <Text style={gs.secondaryBtnText}>📺  Double Crowns (♛ +1)</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={gs.primaryBtn}
-                  onPress={() => {
+                  onPress={async () => {
+                    if (leavingRef.current) return;
+                    leavingRef.current = true;
+                    // Interstitial on the way to the next board (frequency-capped).
+                    await maybeShowInterstitial("stage_complete", { mode, stage });
                     if (mode === "golden") {
                       const ids = GOLDEN_STAGES.map((s) => s.id);
                       const i = ids.indexOf(stage);
@@ -1809,6 +1758,9 @@ export default function GameScreen({
                 <Text style={[gs.winStatLabel, { color: C.good, textAlign: "center" }]}>New best!</Text>
               )}
             </View>
+            <TouchableOpacity style={gs.secondaryBtn} onPress={handleContinueTime} activeOpacity={0.85}>
+              <Text style={gs.secondaryBtnText}>📺  +20 seconds — Keep Going</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={gs.primaryBtn} onPress={() => startStage(1)} activeOpacity={0.8}>
               <Text style={gs.primaryBtnText}>↺  Play Again</Text>
             </TouchableOpacity>
@@ -1830,7 +1782,19 @@ export default function GameScreen({
                 ? "No valid pairs remain and your goals aren't met yet."
                 : "No valid pairs remain and you're out of adds."}
             </Text>
-            <TouchableOpacity style={gs.primaryBtn} onPress={() => startStage(stage)} activeOpacity={0.8}>
+            <TouchableOpacity style={gs.secondaryBtn} onPress={handleContinueAdds} activeOpacity={0.85}>
+              <Text style={gs.secondaryBtnText}>📺  +5 Adds — Keep Going</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={gs.primaryBtn}
+              onPress={async () => {
+                if (leavingRef.current) return;
+                leavingRef.current = true;
+                await maybeShowInterstitial("no_moves_restart", { mode, stage });
+                startStage(stage);
+              }}
+              activeOpacity={0.8}
+            >
               <Text style={gs.primaryBtnText}>↺  Restart Stage</Text>
             </TouchableOpacity>
             <TouchableOpacity style={gs.ghostBtn} onPress={() => handleExit("stuck")} activeOpacity={0.8}>

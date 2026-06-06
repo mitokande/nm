@@ -23,3 +23,18 @@ export const BOOSTER_COST = {
 } as const;
 
 export const MAX_BOOSTERS = 9; // keeps the pill from overflowing into "10+"
+
+/** A booster reward attached to mailbox / daily-login rewards. */
+export interface BoosterGift {
+  hint?: number;
+  addrow?: number;
+}
+
+/** Add gifted boosters to the inventory, clamped to MAX_BOOSTERS. Pure. */
+export function grantBoosters(state: Boosters, gift?: BoosterGift): Boosters {
+  if (!gift) return state;
+  const hint = Math.min(MAX_BOOSTERS, state.hint + Math.max(0, Math.floor(gift.hint ?? 0)));
+  const addrow = Math.min(MAX_BOOSTERS, state.addrow + Math.max(0, Math.floor(gift.addrow ?? 0)));
+  if (hint === state.hint && addrow === state.addrow) return state;
+  return { hint, addrow };
+}

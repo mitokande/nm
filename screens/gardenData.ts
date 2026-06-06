@@ -18,11 +18,16 @@ export interface GardenArea {
 // 5 steps drive 6 scenes (main + stage0..stage4):
 //   main → barren · stage0 → plant rose · stage1 → another flower bed
 //   stage2 → rose grows · stage3 → rose grows more · stage4 → fully grown
+//
+// Costs are tuned as the meta-progression crown SINK: with crowns earned ~1 per
+// cleared board, this is the long-term carrot that makes rewarded "2× crowns" /
+// "+1 life" ads worth watching. Tune freely — the curve below totals 750 crowns.
 export const GARDEN_AREAS: GardenArea[] = [
-  { id: "rose",      name: "Plant a Rose",         cost: 5,  icon: "🌹" },
-  { id: "beds",      name: "Add another Flower Bed", cost: 8,  icon: "🌸" },
-  { id: "grow1",     name: "Grow the Rose",        cost: 12, icon: "🌱" },
-  { id: "fullbloom", name: "Full Bloom",           cost: 20, icon: "🌺" },
+  { id: "rose",      name: "Plant a Rose",          cost: 40,  icon: "🌹" },
+  { id: "beds",      name: "Add another Flower Bed", cost: 80,  icon: "🌸" },
+  { id: "grow1",     name: "Grow the Rose",          cost: 130, icon: "🌱" },
+  { id: "grow2",     name: "Nurture the Garden",     cost: 200, icon: "🌿" },
+  { id: "fullbloom", name: "Full Bloom",             cost: 300, icon: "🌺" },
 ];
 
 export const TOTAL_AREAS = GARDEN_AREAS.length;
