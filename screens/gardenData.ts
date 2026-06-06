@@ -23,11 +23,11 @@ export interface GardenArea {
 // cleared board, this is the long-term carrot that makes rewarded "2× crowns" /
 // "+1 life" ads worth watching. Tune freely — the curve below totals 750 crowns.
 export const GARDEN_AREAS: GardenArea[] = [
-  { id: "rose",      name: "Plant a Rose",          cost: 40,  icon: "🌹" },
-  { id: "beds",      name: "Add another Flower Bed", cost: 80,  icon: "🌸" },
-  { id: "grow1",     name: "Grow the Rose",          cost: 130, icon: "🌱" },
-  { id: "grow2",     name: "Nurture the Garden",     cost: 200, icon: "🌿" },
-  { id: "fullbloom", name: "Full Bloom",             cost: 300, icon: "🌺" },
+  { id: "rose",      name: "Plant a Rose",          cost: 5,  icon: "🌹" },
+  { id: "beds",      name: "Add another Flower Bed", cost: 2,  icon: "🌸" },
+  { id: "grow1",     name: "Grow the Rose",          cost: 3, icon: "🌱" },
+  { id: "grow2",     name: "Nurture the Garden",     cost: 4, icon: "🌿" },
+  { id: "fullbloom", name: "Full Bloom",             cost: 15, icon: "🌺" },
 ];
 
 export const TOTAL_AREAS = GARDEN_AREAS.length;
