@@ -385,6 +385,25 @@ function App() {
     navigateTo("game", 1, "tutorial");
   }
 
+  async function handleDeleteAllData() {
+    // User-initiated full data wipe (Settings → Delete all data). Mirrors the
+    // DEV reset, but stays on the menu instead of forcing the tutorial. The
+    // next time the user taps Play, onboarding will run again (data is gone).
+    track("settings_toggled", { setting: "delete_all_data" });
+    try { await AsyncStorage.clear(); } catch (e) { captureError(e, { kind: "storage_clear" }); }
+    setCrowns(0);
+    setGardenState(defaultGardenState());
+    setLives(defaultLivesState());
+    setMailbox(todaysSeed());
+    setDailyDate("");
+    setDailyLogin(defaultDailyLogin());
+    setBoosters(defaultBoosters());
+    setGoldenStage(1);
+    setFreezeStage(1);
+    AsyncStorage.setItem("mailbox_seeded", "1").catch(onStorageError("mailbox_seeded"));
+    setNeedsTutorial(true);
+  }
+
   if (!splashDone) {
     return <SplashScreen onDone={() => setSplashDone(true)} />;
   }
@@ -436,6 +455,7 @@ function App() {
             onToggleSound={handleToggleSound}
             onToggleHaptics={handleToggleHaptics}
             onToggleNotifications={handleToggleNotifications}
+            onDeleteAllData={handleDeleteAllData}
             onResetTutorial={handleResetTutorial}
           />
         </ErrorBoundary>

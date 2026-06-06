@@ -1,7 +1,13 @@
 import React from "react";
 import {
   Modal, View, Text, TouchableOpacity, StyleSheet, Switch, Platform,
+  Linking, Alert, ScrollView, Dimensions,
 } from "react-native";
+import Constants from "expo-constants";
+import { manageAdConsent } from "./consent";
+
+const PRIVACY_URL = "https://mithatck.com/numbermatch/privacy.html";
+const TERMS_URL = "https://mithatck.com/numbermatch/terms.html";
 
 const C = {
   white: "#fbfaf6",
@@ -22,6 +28,7 @@ interface Props {
   onToggleSound: (next: boolean) => void;
   onToggleHaptics: (next: boolean) => void;
   onToggleNotifications: (next: boolean) => void;
+  onDeleteAllData: () => void;
   onResetTutorial?: () => void;
   onClose: () => void;
 }
@@ -29,8 +36,43 @@ interface Props {
 export default function Settings({
   visible, soundOn, hapticsOn, notifyOn,
   onToggleSound, onToggleHaptics, onToggleNotifications,
-  onResetTutorial, onClose,
+  onDeleteAllData, onResetTutorial, onClose,
 }: Props) {
+  const appVersion = Constants.expoConfig?.version ?? "1.0.0";
+
+  function openUrl(url: string) {
+    Linking.openURL(url).catch(() =>
+      Alert.alert("Couldn't open link", "Please try again in a moment."),
+    );
+  }
+
+  async function handleAdPrivacy() {
+    const shown = await manageAdConsent();
+    if (!shown) {
+      Alert.alert(
+        "Ad privacy",
+        "There are no ad-consent options to change in your region right now. " +
+          "You can also manage tracking in your device's privacy settings.",
+      );
+    }
+  }
+
+  function handleDelete() {
+    Alert.alert(
+      "Delete all data?",
+      "This permanently erases your progress, crowns, high scores, and settings on " +
+        "this device. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => { onClose(); onDeleteAllData(); },
+        },
+      ],
+    );
+  }
+
   return (
     <Modal visible={visible} transparent hardwareAccelerated statusBarTranslucent animationType="fade" onRequestClose={onClose}>
       <View style={s.scrim}>
@@ -43,35 +85,60 @@ export default function Settings({
             </TouchableOpacity>
           </View>
 
-          <Row
-            icon="🔊"
-            label="Sound"
-            sub="Match, combo, and row-clear effects"
-            value={soundOn}
-            onChange={onToggleSound}
-          />
-          <Row
-            icon="📳"
-            label="Haptics"
-            sub="Light taps on matches and combos"
-            value={hapticsOn}
-            onChange={onToggleHaptics}
-          />
-          <Row
-            icon="🔔"
-            label="Notifications"
-            sub="Hearts full and daily reward reminders"
-            value={notifyOn}
-            onChange={onToggleNotifications}
-          />
+          <ScrollView style={s.scroll} showsVerticalScrollIndicator={false}>
+            <Row
+              icon="🔊"
+              label="Sound"
+              sub="Match, combo, and row-clear effects"
+              value={soundOn}
+              onChange={onToggleSound}
+            />
+            <Row
+              icon="📳"
+              label="Haptics"
+              sub="Light taps on matches and combos"
+              value={hapticsOn}
+              onChange={onToggleHaptics}
+            />
+            <Row
+              icon="🔔"
+              label="Notifications"
+              sub="Hearts full and daily reward reminders"
+              value={notifyOn}
+              onChange={onToggleNotifications}
+            />
 
-          {__DEV__ && onResetTutorial && (
-            <TouchableOpacity style={s.dangerBtn} onPress={onResetTutorial} activeOpacity={0.8}>
-              <Text style={s.dangerBtnText}>↺  Reset all progress (DEV)</Text>
+            <ActionRow
+              icon="📜"
+              label="Privacy Policy"
+              sub="How we handle your data"
+              onPress={() => openUrl(PRIVACY_URL)}
+            />
+            <ActionRow
+              icon="📄"
+              label="Terms of Service"
+              sub="The rules for using Number Match"
+              onPress={() => openUrl(TERMS_URL)}
+            />
+            <ActionRow
+              icon="🛡️"
+              label="Ad privacy settings"
+              sub="Manage personalized-ad consent"
+              onPress={handleAdPrivacy}
+            />
+
+            <TouchableOpacity style={s.dangerBtn} onPress={handleDelete} activeOpacity={0.8}>
+              <Text style={s.dangerBtnText}>🗑  Delete all data</Text>
             </TouchableOpacity>
-          )}
 
-          <Text style={s.versionLabel}>Number Match</Text>
+            {__DEV__ && onResetTutorial && (
+              <TouchableOpacity style={s.devBtn} onPress={onResetTutorial} activeOpacity={0.8}>
+                <Text style={s.devBtnText}>↺  Reset all progress (DEV)</Text>
+              </TouchableOpacity>
+            )}
+
+            <Text style={s.versionLabel}>Number Match · v{appVersion}</Text>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -104,6 +171,26 @@ function Row({
   );
 }
 
+function ActionRow({
+  icon, label, sub, onPress,
+}: {
+  icon: string;
+  label: string;
+  sub: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={s.row} onPress={onPress} activeOpacity={0.7}>
+      <Text style={s.rowIcon}>{icon}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={s.rowLabel}>{label}</Text>
+        <Text style={s.rowSub}>{sub}</Text>
+      </View>
+      <Text style={s.chevron}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
 const s = StyleSheet.create({
   scrim: {
     flex: 1,
@@ -123,6 +210,9 @@ const s = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 32,
     elevation: 18,
+  },
+  scroll: {
+    maxHeight: Dimensions.get("window").height * 0.62,
   },
   headerRow: {
     flexDirection: "row",
@@ -153,6 +243,7 @@ const s = StyleSheet.create({
   rowIcon: { fontSize: 22, width: 28, textAlign: "center" },
   rowLabel: { fontSize: 16, fontWeight: "800", color: C.ink },
   rowSub: { fontSize: 12, color: C.inkSoft, marginTop: 2 },
+  chevron: { fontSize: 24, color: C.inkSoft, fontWeight: "600", paddingHorizontal: 4 },
   dangerBtn: {
     marginTop: 18,
     backgroundColor: "rgba(212,92,92,0.10)",
@@ -162,6 +253,15 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   dangerBtnText: { color: C.danger, fontWeight: "800", fontSize: 13 },
+  devBtn: {
+    marginTop: 10,
+    backgroundColor: "rgba(26,29,46,0.06)",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  devBtnText: { color: C.inkSoft, fontWeight: "800", fontSize: 13 },
   versionLabel: {
     textAlign: "center",
     marginTop: 16,

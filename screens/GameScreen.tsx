@@ -12,6 +12,7 @@ import type { GameMode } from "../App";
 import Constants from "expo-constants";
 import levelsJson from "./levels.json";
 import { track, captureError, onStorageError } from "./telemetry";
+import { ensureAdConsent } from "./consent";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-native-reanimated";
 
@@ -434,8 +435,17 @@ export default function GameScreen({
 
     (async () => {
       try {
+        // GDPR/US UMP consent + iOS ATT must resolve before init & first request
+        // so the SDK has the consent signal when it chooses ad fill.
+        const consent = await ensureAdConsent();
+        if (cancelled) return;
+
         await admob.default()
           .setRequestConfiguration({
+            // Lock inventory to general audiences; this app is not child-directed.
+            maxAdContentRating: admob.MaxAdContentRating.G,
+            tagForChildDirectedTreatment: false,
+            tagForUnderAgeOfConsent: false,
             testDeviceIdentifiers: ["EMULATOR"],
           })
           .catch((e: any) => console.log("[ads] setRequestConfiguration failed", e));
@@ -444,6 +454,11 @@ export default function GameScreen({
         console.log("[ads] initialized", initStatus);
         if (cancelled) return;
 
+        if (!consent.canRequestAds) {
+          console.log("[ads] consent not obtained — not requesting ads");
+          return;
+        }
+
         const adUnitId = __DEV__
           ? admob.TestIds.REWARDED
           : Platform.OS === "android"
@@ -451,7 +466,7 @@ export default function GameScreen({
             : "ca-app-pub-4604843322018757/2967656297";
 
         const ad = admob.RewardedAd.createForAdRequest(adUnitId, {
-          requestNonPersonalizedAdsOnly: true,
+          requestNonPersonalizedAdsOnly: consent.nonPersonalizedOnly,
         });
 
         unsubs.push(ad.addAdEventListener(admob.RewardedAdEventType.LOADED, () => {

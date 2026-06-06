@@ -77,6 +77,7 @@ interface Props {
   onToggleSound: (next: boolean) => void;
   onToggleHaptics: (next: boolean) => void;
   onToggleNotifications: (next: boolean) => void;
+  onDeleteAllData: () => void;
   onResetTutorial?: () => void;
   /** DEV-only: add crowns for debugging. */
   onDebugAddCrowns?: (amount: number) => void;
@@ -88,7 +89,7 @@ export default function MainMenu({
   soundOn, hapticsOn, notifyOn,
   onInvestGarden, onPlay, onClaimMail, onClaimDailyLogin, onBuyBooster,
   onToggleSound, onToggleHaptics, onToggleNotifications,
-  onResetTutorial, onDebugAddCrowns,
+  onDeleteAllData, onResetTutorial, onDebugAddCrowns,
 }: Props) {
   const [endlessStage, setEndlessStage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -349,6 +350,7 @@ export default function MainMenu({
         onToggleSound={onToggleSound}
         onToggleHaptics={onToggleHaptics}
         onToggleNotifications={onToggleNotifications}
+        onDeleteAllData={onDeleteAllData}
         onResetTutorial={onResetTutorial}
         onClose={() => setSettingsOpen(false)}
       />
