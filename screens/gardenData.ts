@@ -19,9 +19,9 @@ export interface GardenArea {
 //   main → barren · stage0 → plant rose · stage1 → another flower bed
 //   stage2 → rose grows · stage3 → rose grows more · stage4 → fully grown
 //
-// Costs are tuned as the meta-progression crown SINK: with crowns earned ~1 per
-// cleared board, this is the long-term carrot that makes rewarded "2× crowns" /
-// "+1 life" ads worth watching. Tune freely — the curve below totals 750 crowns.
+// Costs are the meta-progression crown SINK: with crowns earned ~1 per cleared
+// board, this is the long-term carrot that makes rewarded "2× crowns" / "+1 life"
+// ads worth watching. Tune freely.
 export const GARDEN_AREAS: GardenArea[] = [
   { id: "rose",      name: "Plant a Rose",          cost: 5,  icon: "🌹" },
   { id: "beds",      name: "Add another Flower Bed", cost: 2,  icon: "🌸" },
