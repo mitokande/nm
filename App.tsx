@@ -12,10 +12,12 @@ import {
   tickRegen, spendLife, grantLives,
 } from "./screens/livesData";
 import {
-  MailMessage, normalizeMailbox, todaysSeed, pushMessage,
+  MailMessage, normalizeMailbox, todaysSeed, pushMessage, pruneMailbox,
 } from "./screens/mailboxData";
 import {
   todayKey, DAILY_BONUS_CROWNS, DAILY_BONUS_LIVES,
+  DailyChallengeProgress, defaultChallengeProgress, normalizeChallengeProgress,
+  applyStageStat, StageStat, todaysChallenge,
 } from "./screens/dailyChallenge";
 import {
   DailyLoginState, defaultDailyLogin, normalizeDailyLogin, claim as claimDailyLogin,
@@ -27,7 +29,9 @@ import { showRewarded, isRewardedReady } from "./screens/adManager";
 import { setMuted } from "./screens/sound";
 import {
   requestPermission, scheduleLivesFull, scheduleDailyChallenge, scheduleDailyLogin,
+  getInitialDeepLink, addDeepLinkListener, DeepLink,
 } from "./screens/notifications";
+import { ensureSchemaVersion } from "./screens/storage";
 import {
   initTelemetry, identify, track, screenView, captureError,
   onStorageError, flushTelemetry, withSentry,
@@ -50,7 +54,10 @@ function App() {
   const [lives, setLives] = useState<LivesState>(defaultLivesState);
   const [mailbox, setMailbox] = useState<MailMessage[]>([]);
   const [dailyDate, setDailyDate] = useState<string>("");
+  const [dailyChallenge, setDailyChallenge] = useState<DailyChallengeProgress>(defaultChallengeProgress);
   const [dailyLogin, setDailyLogin] = useState<DailyLoginState>(defaultDailyLogin);
+  // Set when a notification tap should auto-open a menu modal; consumed by MainMenu.
+  const [menuDeepLink, setMenuDeepLink] = useState<"daily-login" | null>(null);
   const [boosters, setBoosters] = useState<Boosters>(defaultBoosters);
   // Boosters spent on a run, handed to GameScreen on mount and zeroed in storage
   // so they don't double-apply. Read only inside the game screen.
@@ -66,7 +73,9 @@ function App() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    Promise.all([
+    // Run schema migrations BEFORE reading any persisted state (so a future
+    // migration sees the old shape and the reads below see the new one).
+    ensureSchemaVersion().then(() => Promise.all([
       AsyncStorage.getItem("crowns"),
       AsyncStorage.getItem("onboarding_done"),
       AsyncStorage.getItem("garden_state"),
@@ -74,6 +83,7 @@ function App() {
       AsyncStorage.getItem("mailbox"),
       AsyncStorage.getItem("mailbox_seeded"),
       AsyncStorage.getItem("daily_challenge_date"),
+      AsyncStorage.getItem("daily_challenge_progress"),
       AsyncStorage.getItem("daily_login_state"),
       AsyncStorage.getItem("boosters"),
       AsyncStorage.getItem("golden_stage"),
@@ -81,9 +91,9 @@ function App() {
       AsyncStorage.getItem("sound_muted"),
       AsyncStorage.getItem("haptics_enabled"),
       AsyncStorage.getItem("notifications_enabled"),
-    ]).then(([
+    ])).then(([
       crownVal, onboardingDone, gardenVal,
-      livesVal, mailVal, mailSeeded, dailyVal,
+      livesVal, mailVal, mailSeeded, dailyVal, dailyProgVal,
       loginVal, boosterVal, goldenVal, freezeVal,
       soundMuted, hapticsEnabled, notifyEnabled,
     ]) => {
@@ -98,9 +108,12 @@ function App() {
         setMailbox(todaysSeed());
         AsyncStorage.setItem("mailbox_seeded", "1").catch(onStorageError("mailbox_seeded"));
       } else if (mailVal) {
-        try { setMailbox(normalizeMailbox(JSON.parse(mailVal))); } catch {}
+        try { setMailbox(pruneMailbox(normalizeMailbox(JSON.parse(mailVal)))); } catch {}
       }
       if (dailyVal) setDailyDate(dailyVal);
+      if (dailyProgVal) {
+        try { setDailyChallenge(normalizeChallengeProgress(JSON.parse(dailyProgVal))); } catch {}
+      }
       if (loginVal) {
         try { setDailyLogin(normalizeDailyLogin(JSON.parse(loginVal))); } catch {}
       }
@@ -157,6 +170,10 @@ function App() {
   useEffect(() => {
     if (loaded) AsyncStorage.setItem("daily_challenge_date", dailyDate).catch(onStorageError("daily_challenge_date"));
   }, [dailyDate, loaded]);
+
+  useEffect(() => {
+    if (loaded) AsyncStorage.setItem("daily_challenge_progress", JSON.stringify(dailyChallenge)).catch(onStorageError("daily_challenge_progress"));
+  }, [dailyChallenge, loaded]);
 
   useEffect(() => {
     if (loaded) AsyncStorage.setItem("daily_login_state", JSON.stringify(dailyLogin)).catch(onStorageError("daily_login_state"));
@@ -225,6 +242,27 @@ function App() {
     })().catch((e) => captureError(e, { kind: "notif_permission" }));
   }, [loaded, needsTutorial, notifyOn]);
 
+  // Notification deep links: a tap lands the player on the relevant surface and
+  // tags the session for attribution. Onboarding is never interrupted.
+  const coldStartDeepLinkRef = useRef(false);
+  useEffect(() => {
+    if (!loaded) return;
+    const handle = (link: DeepLink) => {
+      track("notification_opened", { link });
+      if (needsTutorial) return;
+      navigateTo("menu");
+      if (link === "daily-login") setMenuDeepLink("daily-login");
+    };
+    // Read the cold-start response exactly once — getLastNotificationResponseAsync
+    // keeps returning the SAME tap on every call, so without this ref any future
+    // re-run of this effect (e.g. needsTutorial flipping) would re-fire it.
+    if (!coldStartDeepLinkRef.current) {
+      coldStartDeepLinkRef.current = true;
+      getInitialDeepLink().then((link) => { if (link) handle(link); }).catch(() => {});
+    }
+    return addDeepLinkListener(handle);
+  }, [loaded, needsTutorial]);
+
   function handleInvestGarden() {
     const result = investCrowns(gardenState, crowns);
     if (result.spent > 0) {
@@ -234,13 +272,20 @@ function App() {
     }
   }
 
-  // First crown of the day from a real run satisfies the daily challenge.
-  // The bonus is delivered to the mailbox so the player sees it on return.
   function handleCrownsEarned(amount: number) {
     setCrowns((c) => c + amount);
-    if (mode === "tutorial") return;
-    const today = todayKey();
-    if (dailyDate !== today) {
+  }
+
+  // Each non-tutorial stage clear feeds the rotating daily challenge. Completing
+  // the goal delivers the bonus to the mailbox (goal-gated, was "first crown").
+  // Pre-computed off current state so the bonus fires exactly once.
+  function handleStageCleared(stat: StageStat) {
+    // justCompleted is true only on the transition to done (applyStageStat
+    // returns false once today's goal is already met), so it fires the bonus once.
+    const { next, justCompleted } = applyStageStat(dailyChallenge, stat);
+    setDailyChallenge(next);
+    if (justCompleted) {
+      const today = next.date;
       setDailyDate(today);
       setLives((l) => grantLives(l, DAILY_BONUS_LIVES));
       setCrowns((c) => c + DAILY_BONUS_CROWNS);
@@ -251,8 +296,29 @@ function App() {
         reward: { crowns: DAILY_BONUS_CROWNS, lives: DAILY_BONUS_LIVES },
         claimed: true,
       }));
-      track("daily_challenge_complete", { bonus_crowns: DAILY_BONUS_CROWNS, bonus_lives: DAILY_BONUS_LIVES });
+      track("daily_challenge_complete", {
+        kind: todaysChallenge(today).kind,
+        bonus_crowns: DAILY_BONUS_CROWNS,
+        bonus_lives: DAILY_BONUS_LIVES,
+      });
     }
+  }
+
+  // Mailbox opened → clear the "new" state (mark all read) and prune old/expired.
+  // Returns the previous reference unchanged when nothing actually changes, so
+  // opening an already-read+pruned mailbox doesn't trigger a persistence write.
+  function handleMailboxOpened() {
+    setMailbox((box) => {
+      let changed = false;
+      const marked = box.map((m) => {
+        if (m.read) return m;
+        changed = true;
+        return { ...m, read: true };
+      });
+      const pruned = pruneMailbox(marked);
+      if (!changed && pruned.length === box.length) return box;
+      return pruned;
+    });
   }
 
   function handleClaimMail(id: string) {
@@ -417,6 +483,7 @@ function App() {
     setLives(defaultLivesState());
     setMailbox(todaysSeed());
     setDailyDate("");
+    setDailyChallenge(defaultChallengeProgress());
     setDailyLogin(defaultDailyLogin());
     setBoosters(defaultBoosters());
     setGoldenStage(1);
@@ -437,6 +504,7 @@ function App() {
     setLives(defaultLivesState());
     setMailbox(todaysSeed());
     setDailyDate("");
+    setDailyChallenge(defaultChallengeProgress());
     setDailyLogin(defaultDailyLogin());
     setBoosters(defaultBoosters());
     setGoldenStage(1);
@@ -468,6 +536,7 @@ function App() {
             bonusAdds={bonusBoosters.addrow}
             onCrownsEarned={handleCrownsEarned}
             onStageAdvance={handleStageAdvance}
+            onStageCleared={handleStageCleared}
             onBack={() => navigateTo("menu")}
             onTutorialComplete={handleTutorialComplete}
           />
@@ -480,6 +549,7 @@ function App() {
             lives={lives}
             mailbox={mailbox}
             dailyCompletedToday={dailyDate === todayKey()}
+            dailyChallenge={dailyChallenge}
             dailyLogin={dailyLogin}
             boosters={boosters}
             goldenStage={goldenStage}
@@ -491,7 +561,10 @@ function App() {
             onDebugAddCrowns={(amount) => setCrowns((c) => c + amount)}
             onPlay={(stage, m) => navigateTo("game", stage, m)}
             onClaimMail={handleClaimMail}
+            onOpenMailbox={handleMailboxOpened}
             onClaimDailyLogin={handleClaimDailyLogin}
+            openModal={menuDeepLink}
+            onModalConsumed={() => setMenuDeepLink(null)}
             onBuyBooster={handleBuyBooster}
             onToggleSound={handleToggleSound}
             onToggleHaptics={handleToggleHaptics}

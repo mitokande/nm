@@ -73,7 +73,12 @@ async function cancel(id: string) {
   try { await m.cancelScheduledNotificationAsync(id); } catch {}
 }
 
-async function schedule(id: string, body: { title: string; body: string }, atMs: number) {
+async function schedule(
+  id: string,
+  body: { title: string; body: string },
+  atMs: number,
+  data?: Record<string, any>,
+) {
   const m = getModule();
   if (!m) return;
   const delaySeconds = Math.max(1, Math.ceil((atMs - Date.now()) / 1000));
@@ -84,6 +89,7 @@ async function schedule(id: string, body: { title: string; body: string }, atMs:
         title: body.title,
         body: body.body,
         sound: Platform.OS === "ios" ? "default" : undefined,
+        data: data ?? {},
       },
       trigger: { seconds: delaySeconds, repeats: false },
     });
@@ -96,7 +102,10 @@ export async function scheduleLivesFull(lives: LivesState, enabled: boolean) {
   await cancel(LIVES_FULL_ID);
   if (!enabled) return;
   if (lives.count >= MAX_LIVES) return;
-  const remaining = (MAX_LIVES - lives.count) * REGEN_MS - (Date.now() - lives.lastRegenTs);
+  // Clamp the elapsed term so a future-dated lastRegenTs (e.g. user jumped the
+  // clock forward then back) can't push the schedule arbitrarily far out.
+  const elapsed = Math.max(0, Date.now() - lives.lastRegenTs);
+  const remaining = (MAX_LIVES - lives.count) * REGEN_MS - elapsed;
   if (remaining <= 0) return;
   await schedule(
     LIVES_FULL_ID,
@@ -105,6 +114,7 @@ export async function scheduleLivesFull(lives: LivesState, enabled: boolean) {
       body: "Come back and play — your garden is waiting.",
     },
     Date.now() + remaining,
+    { link: "lives" },
   );
 }
 
@@ -125,6 +135,7 @@ export async function scheduleDailyChallenge(completedToday: boolean, enabled: b
       body: "Play one stage today to earn bonus crowns and a heart.",
     },
     target.getTime(),
+    { link: "daily-challenge" },
   );
 }
 
@@ -142,6 +153,7 @@ export async function scheduleDailyLogin(enabled: boolean) {
       body: "Open Number Match to claim today's gift.",
     },
     target.getTime(),
+    { link: "daily-login" },
   );
 }
 
@@ -149,4 +161,42 @@ export async function cancelAll() {
   const m = getModule();
   if (!m) return;
   try { await m.cancelAllScheduledNotificationsAsync(); } catch {}
+}
+
+// ── Deep links from notification taps ────────────────────────────────────────
+// Each scheduled notification carries a `data.link`. Tapping it should land the
+// player on the relevant surface (and we tag the session for attribution).
+
+export type DeepLink = "lives" | "daily-challenge" | "daily-login";
+
+function extractLink(response: any): DeepLink | null {
+  const link = response?.notification?.request?.content?.data?.link;
+  return link === "lives" || link === "daily-challenge" || link === "daily-login" ? link : null;
+}
+
+// The deep link that cold-started the app via a notification tap, if any.
+export async function getInitialDeepLink(): Promise<DeepLink | null> {
+  const m = getModule();
+  if (!m) return null;
+  try {
+    const resp = await m.getLastNotificationResponseAsync?.();
+    return extractLink(resp);
+  } catch {
+    return null;
+  }
+}
+
+// Subscribe to notification taps while the app is running. Returns an unsubscribe.
+export function addDeepLinkListener(cb: (link: DeepLink) => void): () => void {
+  const m = getModule();
+  if (!m) return () => {};
+  try {
+    const sub = m.addNotificationResponseReceivedListener?.((resp: any) => {
+      const link = extractLink(resp);
+      if (link) cb(link);
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  } catch {
+    return () => {};
+  }
 }

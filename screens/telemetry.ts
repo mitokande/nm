@@ -42,7 +42,8 @@ export type AnalyticsEvent =
   | "hint_used"
   | "lives_depleted"
   | "mailbox_claimed"
-  | "settings_toggled";
+  | "settings_toggled"
+  | "notification_opened";
 
 type Props = Record<string, any>;
 

@@ -70,6 +70,8 @@ interface Props {
   onCrownsEarned: (amount: number) => void;
   /** Notify App when a new stage is reached so menu tiles can reflect it. */
   onStageAdvance?: (mode: GameMode, stage: number) => void;
+  /** Report a (non-tutorial) stage clear for daily-challenge progress. */
+  onStageCleared?: (stat: { score: number; rows: number; ms: number }) => void;
   onBack: () => void;
   onTutorialComplete?: () => void;
 }
@@ -343,7 +345,7 @@ function Celebration() {
 export default function GameScreen({
   initialStage, mode, crowns,
   bonusHints = 0, bonusAdds = 0,
-  onCrownsEarned, onStageAdvance, onBack, onTutorialComplete,
+  onCrownsEarned, onStageAdvance, onStageCleared, onBack, onTutorialComplete,
 }: Props) {
   const [stage, setStage] = useState(initialStage);
   const [cells, setCells] = useState<Cell[]>(() => buildCellsForMode(initialStage, mode));
@@ -447,6 +449,8 @@ export default function GameScreen({
   const leavingRef = useRef(false);
   // Time-Attack board rotation index into ENDLESS_IDS (cycles boards per clear).
   const taBoardRef = useRef(0);
+  // Wall-clock when the current stage started, for the "clear under 90s" challenge.
+  const stageStartRef = useRef(Date.now());
   // True only while a Time-Attack run is actively playable — gates the
   // background auto-pause so we don't stack it on a win/time-up modal.
   const bgPausableRef = useRef(false);
@@ -767,6 +771,10 @@ export default function GameScreen({
       playSound("stage_win", 0.85);
       if (mode !== "tutorial") {
         onCrownsEarned(1);
+        // Real cleared-row count, matching the golden site below — `cells` only
+        // ever GROWS (matches deactivate cells, Add Row appends), so its length
+        // would dramatically over-count the "rows" daily challenge.
+        onStageCleared?.({ score, rows: destroyedRows.length, ms: Date.now() - stageStartRef.current });
         track("stage_complete", { mode, stage, score });
         if (score > bestScore) {
           setBestScore(score);
@@ -783,10 +791,13 @@ export default function GameScreen({
     if (rem === 0 && cells.length > 0 && clearingRows.length === 0) {
       setTimeLeft((t) => Math.min(t + 15, 120));
       onCrownsEarned(1);
+      // Read destroyedRows BEFORE the per-board reset two statements down.
+      onStageCleared?.({ score, rows: destroyedRows.length, ms: Date.now() - stageStartRef.current });
       track("stage_complete", { mode: "timeattack", stage, score });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
       showToast("Board cleared!  +15s", "win", 1800);
+      stageStartRef.current = Date.now(); // time the NEXT board fresh
       // Rotate through the endless boards instead of re-seeding stage 1 forever.
       taBoardRef.current = (taBoardRef.current + 1) % ENDLESS_IDS.length;
       setCells(buildCells(STAGES[ENDLESS_IDS[taBoardRef.current]]));
@@ -810,6 +821,7 @@ export default function GameScreen({
       wonRef.current = true;
       setStageComplete(true);
       onCrownsEarned(1);
+      onStageCleared?.({ score, rows: destroyedRows.length, ms: Date.now() - stageStartRef.current });
       track("stage_complete", { mode: "golden", stage, score });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSound("stage_win", 0.85);
@@ -1229,6 +1241,7 @@ export default function GameScreen({
 
   function startStage(s: number) {
     stageEpochRef.current += 1;
+    stageStartRef.current = Date.now();
     if (mode === "endless" || mode === "freeze" || mode === "golden") {
       const key =
         mode === "endless" ? "endless_stage" :

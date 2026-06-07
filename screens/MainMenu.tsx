@@ -11,7 +11,8 @@ import {
   LivesState, MAX_LIVES, msUntilNextLife, formatCountdown,
 } from "./livesData";
 import {
-  msUntilTomorrow, formatHMS,
+  msUntilTomorrow, formatHMS, todayKey,
+  DailyChallengeProgress, challengeTarget, todaysChallenge,
 } from "./dailyChallenge";
 import { MailMessage, unreadCount } from "./mailboxData";
 import { DailyLoginState, canClaimToday } from "./dailyLogin";
@@ -61,6 +62,7 @@ interface Props {
   lives: LivesState;
   mailbox: MailMessage[];
   dailyCompletedToday: boolean;
+  dailyChallenge: DailyChallengeProgress;
   dailyLogin: DailyLoginState;
   boosters: Boosters;
   goldenStage: number;
@@ -72,7 +74,10 @@ interface Props {
   onInvestGarden: () => void;
   onPlay: (stage: number, mode: GameMode) => void;
   onClaimMail: (id: string) => void;
+  onOpenMailbox: () => void;
   onClaimDailyLogin: () => void;
+  openModal: "daily-login" | null;
+  onModalConsumed: () => void;
   onBuyBooster: (key: "hint" | "addrow") => void;
   onToggleSound: (next: boolean) => void;
   onToggleHaptics: (next: boolean) => void;
@@ -85,9 +90,11 @@ interface Props {
 
 export default function MainMenu({
   crowns, gardenState, lives, mailbox, dailyCompletedToday,
+  dailyChallenge,
   dailyLogin, boosters, goldenStage, freezeStage,
   soundOn, hapticsOn, notifyOn,
-  onInvestGarden, onPlay, onClaimMail, onClaimDailyLogin, onBuyBooster,
+  onInvestGarden, onPlay, onClaimMail, onOpenMailbox, onClaimDailyLogin, onBuyBooster,
+  openModal, onModalConsumed,
   onToggleSound, onToggleHaptics, onToggleNotifications,
   onDeleteAllData, onResetTutorial, onDebugAddCrowns,
 }: Props) {
@@ -179,6 +186,28 @@ export default function MainMenu({
     }
   }, [dailyClaimable]);
 
+  // A notification tap asked us to open the daily-reward modal.
+  useEffect(() => {
+    if (openModal === "daily-login") {
+      setDailyLoginOpen(true);
+      onModalConsumed();
+    }
+  }, [openModal]);
+
+  // Daily-challenge badge: progress chip ("3/12" / "Score 200" / "Beat 90s").
+  // Derived from the ticking `now` so a session that crosses midnight rolls over.
+  const todayKeyNow = todayKey(now);
+  const challengeDef = todaysChallenge(todayKeyNow);
+  const challengeTargetN = challengeTarget(challengeDef);
+  const challengeCurrent = dailyChallenge.date === todayKeyNow
+    ? Math.min(dailyChallenge.progress, challengeTargetN)
+    : 0;
+  const challengeChip = dailyCompletedToday
+    ? undefined
+    : challengeDef.kind === "speed"
+      ? challengeDef.short
+      : `${challengeCurrent}/${challengeTargetN}`;
+
   const sceneIndex = stageImageIndex(gardenState);
   const canPlay = lives.count > 0;
   const livesCountdownMs = msUntilNextLife(lives, now);
@@ -221,7 +250,7 @@ export default function MainMenu({
         <Animated.View style={{ transform: [{ scale: mailBump }] }}>
           <TouchableOpacity
             style={ms.iconBtn}
-            onPress={() => setMailOpen(true)}
+            onPress={() => { onOpenMailbox(); setMailOpen(true); }}
             activeOpacity={0.75}
             hitSlop={8}
           >
@@ -262,7 +291,9 @@ export default function MainMenu({
         <SideBadge
           icon="🎯"
           label="Challenge"
+          chip={challengeChip}
           tint={C.teal}
+          chipColor={C.teal}
           done={dailyCompletedToday}
           dot={!dailyCompletedToday}
           disabled={!canPlay}
