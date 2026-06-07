@@ -5,22 +5,14 @@ import {
 import {
   DailyLoginState, DAILY_REWARDS, nextClaimDay, canClaimToday,
 } from "./dailyLogin";
+import { C as BASE_C } from "./tokens";
 
+// Calendar-specific overrides: a translucent crown overlay, a paler ghost cell,
+// and a fresher "claimed" green than the gameplay palette uses.
 const C = {
-  white: "#fbfaf6",
-  paper: "#fdfbf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.55)",
-  hairline: "rgba(26,29,46,0.08)",
-  coral: "#ec7458",
-  teal: "#3e9d8f",
-  tealSoft: "#d6ebe5",
-  crown: "#d9a648",
+  ...BASE_C,
   crownSoft: "rgba(217,166,72,0.18)",
-  heart: "#e35d6a",
-  heartSoft: "rgba(227,93,106,0.14)",
   ghost: "#e9e1d2",
-  scrim: "rgba(10,12,22,0.45)",
   good: "#4caf50",
 };
 
@@ -58,7 +50,12 @@ export default function DailyLogin({ visible, state, onClaim, onClose }: Props) 
               <Text style={s.title}>Daily Reward</Text>
               <Text style={s.subtitle}>Come back every day — the streak grows.</Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={16}
+              accessibilityRole="button"
+              accessibilityLabel="Close daily reward"
+            >
               <Text style={s.closeX}>✕</Text>
             </TouchableOpacity>
           </View>

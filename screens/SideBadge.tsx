@@ -1,16 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Animated } from "react-native";
-
-const C = {
-  white: "#fbfaf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.55)",
-  hairline: "rgba(26,29,46,0.10)",
-  ghostDisc: "#e7e1d2",
-  ghostInk: "rgba(26,29,46,0.45)",
-  coral: "#ec7458",
-  teal: "#3e9d8f",
-};
+import { C } from "./tokens";
+import { useReducedMotion } from "./useReducedMotion";
 
 interface Props {
   /** Emoji or single glyph rendered inside the colored disc. */
@@ -38,9 +29,10 @@ export default function SideBadge({
 }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pressAnim = useRef(new Animated.Value(1)).current;
+  const reduced = useReducedMotion();
 
   useEffect(() => {
-    if (!pulse || disabled) {
+    if (!pulse || disabled || reduced) {
       pulseAnim.setValue(1);
       return;
     }
@@ -50,7 +42,7 @@ export default function SideBadge({
     ]));
     loop.start();
     return () => loop.stop();
-  }, [pulse, disabled]);
+  }, [pulse, disabled, reduced]);
 
   return (
     <TouchableOpacity
@@ -65,6 +57,9 @@ export default function SideBadge({
       }}
       style={[s.touch, disabled && s.touchDisabled]}
       hitSlop={6}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      accessibilityLabel={label ? (chip ? `${label} ${chip}` : label) : undefined}
     >
       <Animated.View style={{ transform: [{ scale: Animated.multiply(pulseAnim, pressAnim) }] }}>
         <View style={s.disc}>

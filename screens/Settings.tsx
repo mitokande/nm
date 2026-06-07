@@ -5,20 +5,10 @@ import {
 } from "react-native";
 import Constants from "expo-constants";
 import { manageAdConsent } from "./consent";
+import { C } from "./tokens";
 
 const PRIVACY_URL = "https://mithatck.com/numbermatch/privacy.html";
 const TERMS_URL = "https://mithatck.com/numbermatch/terms.html";
-
-const C = {
-  white: "#fbfaf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.55)",
-  hairline: "rgba(26,29,46,0.08)",
-  coral: "#ec7458",
-  teal: "#3e9d8f",
-  danger: "#d45c5c",
-  scrim: "rgba(10,12,22,0.45)",
-};
 
 interface Props {
   visible: boolean;
@@ -80,7 +70,12 @@ export default function Settings({
         <View style={s.sheet}>
           <View style={s.headerRow}>
             <Text style={s.title}>Settings</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={16}
+              accessibilityRole="button"
+              accessibilityLabel="Close settings"
+            >
               <Text style={s.closeX}>✕</Text>
             </TouchableOpacity>
           </View>

@@ -3,19 +3,7 @@ import {
   Modal, View, Text, TouchableOpacity, StyleSheet, ScrollView,
 } from "react-native";
 import { MailMessage } from "./mailboxData";
-
-const C = {
-  white: "#fbfaf6",
-  paper: "#fdfbf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.55)",
-  hairline: "rgba(26,29,46,0.08)",
-  coral: "#ec7458",
-  teal: "#3e9d8f",
-  crown: "#d9a648",
-  scrim: "rgba(10,12,22,0.45)",
-  unreadDot: "#ec7458",
-};
+import { C } from "./tokens";
 
 interface Props {
   visible: boolean;
@@ -32,7 +20,12 @@ export default function Mailbox({ visible, messages, onClaim, onClose }: Props) 
         <View style={s.sheet}>
           <View style={s.headerRow}>
             <Text style={s.title}>Mailbox</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={16}
+              accessibilityRole="button"
+              accessibilityLabel="Close mailbox"
+            >
               <Text style={s.closeX}>✕</Text>
             </TouchableOpacity>
           </View>

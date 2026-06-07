@@ -1,19 +1,20 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  View, Text, TouchableOpacity, StyleSheet, Animated,
+  View, Text, TouchableOpacity, StyleSheet, Animated, AppState,
 } from "react-native";
 import {
   GardenState, GARDEN_AREAS, TOTAL_AREAS,
   currentArea, isFullyRestored,
 } from "./gardenData";
+import { C as BASE_C } from "./tokens";
+import { useReducedMotion } from "./useReducedMotion";
 
+// Garden uses a warmer brown ink tuned for the photograph backdrop instead of
+// the default near-black, plus a leaf accent and a brown progress track.
 const C = {
-  white: "#fbfaf6",
+  ...BASE_C,
   ink: "#2a2118",
   inkSoft: "rgba(42,33,24,0.5)",
-  ghost: "#cdc4b3",
-  crown: "#d9a648",
-  coral: "#ec7458",
   track: "rgba(42,33,24,0.10)",
   leaf: "#5f8a47",
 };
@@ -156,7 +157,19 @@ export default function Garden({ crowns, gardenState, onInvest }: Props) {
 // Lightweight looping particles (butterflies + drifting petals) so the garden
 // feels alive even when idle. All transforms use the native driver.
 
-export function AmbientLife({ w, h }: { w: number; h: number }) {
+export function AmbientLife({ w, h, paused }: { w: number; h: number; paused?: boolean }) {
+  // Stop the loops when reduce-motion is on, when the app is backgrounded
+  // (battery + jank), or when a modal hides the garden anyway. Unmounting the
+  // particles triggers their Animated.loop.stop() cleanup, so this is a true
+  // pause — no timers run while inactive.
+  const reduced = useReducedMotion();
+  const [active, setActive] = useState(() => AppState.currentState === "active");
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => setActive(s === "active"));
+    return () => sub.remove();
+  }, []);
+  if (reduced || !active || paused) return null;
+
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Petal w={w} h={h} emoji="🌸" startX={w * 0.18} delay={0} duration={9000} />

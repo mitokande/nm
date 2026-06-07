@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
   ScrollView, Animated, Easing, Dimensions, StatusBar, Modal, Platform, AppState,
+  InteractionManager,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -12,6 +13,9 @@ import type { GameMode } from "../App";
 import levelsJson from "./levels.json";
 import { track, onStorageError } from "./telemetry";
 import { ensureInitialized, showRewarded, maybeShowInterstitial } from "./adManager";
+import { C } from "./tokens";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useReducedMotion } from "./useReducedMotion";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-native-reanimated";
 
@@ -447,6 +451,13 @@ export default function GameScreen({
   // a double-tap can't fire two interstitial+startStage runs, and so Double Crowns
   // can't be tapped while the interstitial is mid-flight. Reset in startStage.
   const leavingRef = useRef(false);
+  // Safe-area insets drive the root paddingTop AND the drag-tile compensation
+  // (the floating drag cell uses absolute window coords and must subtract the
+  // root's top padding to align with the finger). Keep them in lockstep.
+  const insets = useSafeAreaInsets();
+  const padTop = insets.top || ROOT_PAD_TOP;
+  const padBottom = insets.bottom + 16;
+  const reducedMotion = useReducedMotion();
   // Time-Attack board rotation index into ENDLESS_IDS (cycles boards per clear).
   const taBoardRef = useRef(0);
   // Wall-clock when the current stage started, for the "clear under 90s" challenge.
@@ -709,26 +720,32 @@ export default function GameScreen({
     }
   }, [cells]);
 
+  // No-moves detector runs after every match. `findHint` is O(N²) over the
+  // board, which causes a visible stutter right after each match on mid-range
+  // Android. Defer to after the match animation has yielded the JS thread.
   useEffect(() => {
     if (stageComplete || noMoves || timeUp || adds > 0 || clearingRows.length > 0 || poppingPair !== null || mode === "tutorial") return;
     const rem = cells.filter((c) => c.active).length;
     if (rem === 0) return;
-    if (findHint(cells, destroyedRows) === null) {
-      if (mode === "timeattack") {
-        const remaining = cells.filter((c) => c.active).map((c) => c.value);
-        if (remaining.length > 0) {
-          setCells((curr) => {
-            const next = [...curr];
-            let nextId = next.length;
-            for (const v of remaining) next.push({ id: nextId++, value: v, active: true });
-            return next;
-          });
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (findHint(cells, destroyedRows) === null) {
+        if (mode === "timeattack") {
+          const remaining = cells.filter((c) => c.active).map((c) => c.value);
+          if (remaining.length > 0) {
+            setCells((curr) => {
+              const next = [...curr];
+              let nextId = next.length;
+              for (const v of remaining) next.push({ id: nextId++, value: v, active: true });
+              return next;
+            });
+          }
+        } else {
+          playSound("no_moves", 0.7);
+          setNoMoves(true);
         }
-      } else {
-        playSound("no_moves", 0.7);
-        setNoMoves(true);
       }
-    }
+    });
+    return () => handle.cancel();
   }, [cells, adds, destroyedRows, stageComplete, clearingRows, poppingPair, noMoves, timeUp, mode]);
 
   useEffect(() => {
@@ -1347,18 +1364,25 @@ export default function GameScreen({
   const dragTileStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: dragX.value - CELL_SIZE / 2 - ROOT_PAD_LEFT },
-      { translateY: dragY.value - CELL_SIZE / 2 - ROOT_PAD_TOP },
+      { translateY: dragY.value - CELL_SIZE / 2 - padTop },
       { scale: 1.12 },
     ],
   }));
 
   return (
-    <View style={gs.root}>
+    <View style={[gs.root, { paddingTop: padTop, paddingBottom: padBottom }]}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* Header */}
       <View style={gs.header}>
-        <TouchableOpacity style={gs.iconBtn} onPress={() => handleExit("quit")} activeOpacity={0.75}>
+        <TouchableOpacity
+          style={gs.iconBtn}
+          onPress={() => handleExit("quit")}
+          activeOpacity={0.75}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Back to menu"
+        >
           <Text style={gs.iconBtnText}>←</Text>
         </TouchableOpacity>
         <View style={gs.titleRow}>
@@ -1385,7 +1409,14 @@ export default function GameScreen({
             </>
           )}
         </View>
-        <TouchableOpacity style={gs.iconBtn} onPress={() => setPaused((p) => !p)} activeOpacity={0.75}>
+        <TouchableOpacity
+          style={gs.iconBtn}
+          onPress={() => setPaused((p) => !p)}
+          activeOpacity={0.75}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={paused ? "Resume" : "Pause"}
+        >
           <Text style={gs.iconBtnText}>{paused ? "▶" : "⏸"}</Text>
         </TouchableOpacity>
       </View>
@@ -1554,10 +1585,15 @@ export default function GameScreen({
                   // doesn't reliably unbind a previous Animated.Value from a transform
                   // key when it switches to a literal, so the old animated value can
                   // stay cached on the native node. A fresh remount avoids that.
+                  // Promote to a hardware texture only when this cell is
+                  // actually animating. With ~70-100 cells on a tall board,
+                  // always-on layers were burning 70-100 hardware textures for
+                  // tiles that aren't moving — measurable Android jank.
+                  const promote = isPopping || isSelected || isHint || isThawing || isShaking;
                   return (
                     <Animated.View
                       key={`${cell.id}-${scaleSrc}`}
-                      renderToHardwareTextureAndroid
+                      renderToHardwareTextureAndroid={promote}
                       style={[
                         gs.cellWrap,
                         { transform: transforms },
@@ -1645,6 +1681,13 @@ export default function GameScreen({
             onPress={handleAddRow}
             disabled={paused || stageComplete}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: paused || stageComplete }}
+            accessibilityLabel={
+              adds === 0
+                ? "Watch an ad to add a row"
+                : `Add a row, ${adds} remaining`
+            }
           >
             <Text style={gs.actionBtnIcon}>{adds === 0 ? "📺" : "＋"}</Text>
             <View style={[gs.badge, adds === 0 && gs.badgeAd]}>
@@ -1657,6 +1700,9 @@ export default function GameScreen({
           onPress={handleHint}
           disabled={paused || stageComplete || timeUp}
           activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: paused || stageComplete || timeUp }}
+          accessibilityLabel={`Show a hint, ${hints} remaining`}
         >
           <Text style={gs.actionBtnIcon}>💡</Text>
           <View style={gs.badge}><Text style={gs.badgeText}>{hints}</Text></View>
@@ -1747,7 +1793,7 @@ export default function GameScreen({
       {/* Stage Complete Modal */}
       <Modal visible={stageComplete} transparent hardwareAccelerated statusBarTranslucent animationType="fade">
         <View style={gs.overlay}>
-          {stageComplete && mode !== "tutorial" && <Celebration key={stage} />}
+          {stageComplete && mode !== "tutorial" && !reducedMotion && <Celebration key={stage} />}
           <View style={gs.card}>
             {mode === "tutorial" ? (
               <>
@@ -1971,33 +2017,6 @@ export default function GameScreen({
   );
 }
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
-
-const C = {
-  bg: "#f5efe6",
-  white: "#fbfaf6",
-  grid: "rgba(26,29,46,0.10)",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.52)",
-  ghost: "#d6cdb9",
-  select: "#f4c64a",
-  selectShadow: "#d4960e",
-  hint: "#fde5a8",
-  coral: "#ec7458",
-  coralSoft: "#fbe1d6",
-  teal: "#3e9d8f",
-  tealSoft: "#d6ebe5",
-  primary: "#ec7458",
-  primary2: "#d45c3a",
-  primaryShadow: "#8f2c10",
-  danger: "#d45c5c",
-  good: "#5baa7a",
-  crown: "#d9a648",
-  crownSoft: "#f9eedb",
-  freeze: "#3a9fdf",
-  freezeBg: "#cce8f5",
-  freezeBorder: "#5aabdd",
-};
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Animated, AppState, View, Alert } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
 import GameScreen from "./screens/GameScreen";
@@ -26,7 +27,7 @@ import {
   Boosters, defaultBoosters, normalizeBoosters, grantBoosters, BOOSTER_COST, MAX_BOOSTERS,
 } from "./screens/boosters";
 import { showRewarded, isRewardedReady } from "./screens/adManager";
-import { setMuted } from "./screens/sound";
+import { setMuted, disposeSounds } from "./screens/sound";
 import {
   requestPermission, scheduleLivesFull, scheduleDailyChallenge, scheduleDailyLogin,
   getInitialDeepLink, addDeepLinkListener, DeepLink,
@@ -207,7 +208,7 @@ function App() {
     if (AppState.currentState === "active") start();
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") start();
-      else { stop(); flushTelemetry(); }
+      else { stop(); flushTelemetry(); disposeSounds(); }
     });
     return () => { stop(); sub.remove(); };
   }, []);
@@ -520,6 +521,7 @@ function App() {
   if (!loaded) return <View style={{ flex: 1, backgroundColor: "#f5efe6" }} />;
 
   return (
+    <SafeAreaProvider>
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#f5efe6" }}>
     <Animated.View
       style={{ flex: 1, backgroundColor: "#f5efe6", opacity: fadeAnim }}
@@ -576,6 +578,7 @@ function App() {
       )}
     </Animated.View>
     </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
 

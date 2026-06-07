@@ -1,18 +1,13 @@
 import React from "react";
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Boosters, BOOSTER_COST, MAX_BOOSTERS } from "./boosters";
+import { C as BASE_C } from "./tokens";
 
+// BoosterSheet uses translucent rgba variants of teal/coral for the chip
+// backgrounds, where the canonical solid hex versions would overpower the card.
 const C = {
-  white: "#fbfaf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.55)",
-  hairline: "rgba(26,29,46,0.08)",
-  scrim: "rgba(10,12,22,0.45)",
-  ghost: "#cdc4b3",
-  crown: "#d9a648",
-  teal: "#3e9d8f",
+  ...BASE_C,
   tealSoft: "rgba(62,157,143,0.16)",
-  coral: "#ec7458",
   coralSoft: "rgba(236,116,88,0.16)",
 };
 
@@ -50,7 +45,12 @@ export default function BoosterSheet({ visible, boosters, crowns, onBuy, onClose
               <Text style={s.title}>Boosters</Text>
               <Text style={s.sub}>Stock up — they apply on your next run.</Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={16}
+              accessibilityRole="button"
+              accessibilityLabel="Close booster shop"
+            >
               <Text style={s.closeX}>✕</Text>
             </TouchableOpacity>
           </View>

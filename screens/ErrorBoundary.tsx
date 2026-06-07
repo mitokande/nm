@@ -6,14 +6,7 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
 import { captureError } from "./telemetry";
-
-const C = {
-  bg: "#f5efe6",
-  white: "#fbfaf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.55)",
-  coral: "#ec7458",
-};
+import { C } from "./tokens";
 
 interface Props {
   children: React.ReactNode;

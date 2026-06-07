@@ -22,6 +22,14 @@ import Mailbox from "./Mailbox";
 import DailyLogin from "./DailyLogin";
 import BoosterSheet from "./BoosterSheet";
 import SideBadge from "./SideBadge";
+import { C } from "./tokens";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Image as ExpoImage } from "expo-image";
+
+// expo-image gives us native decoders + a real memory+disk cache, which matters
+// for the ~12MB combined PNGs the garden scenes ship as. Animated wrapper keeps
+// the existing crossfade pattern working.
+const AnimatedExpoImage = Animated.createAnimatedComponent(ExpoImage);
 
 // Full-screen garden scenes, indexed by stageImageIndex (number of areas restored).
 // 0 = barren, then one image per restored area up to fully restored.
@@ -34,25 +42,6 @@ const GARDEN_SCENES = [
   require("../assets/garden/stage4.png"), // 5 — rose fully grown
 ];
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-
-// ─── Design tokens ────────────────────────────────────────────────────────────
-
-const C = {
-  bg: "#f5efe6",
-  white: "#fbfaf6",
-  ink: "#1a1d2e",
-  inkSoft: "rgba(26,29,46,0.48)",
-  ghost: "#cdc4b3",
-  coral: "#ec7458",
-  coralSoft: "#fbe1d6",
-  teal: "#3e9d8f",
-  tealSoft: "#d6ebe5",
-  danger: "#d45c5c",
-  crown: "#d9a648",
-  freeze: "#3a9fdf",
-  heart: "#e35d6a",
-  golden: "#d9a648",
-};
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -104,7 +93,7 @@ export default function MainMenu({
   const [dailyLoginOpen, setDailyLoginOpen] = useState(false);
   const [boosterOpen, setBoosterOpen] = useState(false);
   const dailyAutoPoppedRef = useRef(false);
-  const [now, setNow] = useState(Date.now());
+  const insets = useSafeAreaInsets();
 
   const crownBump = useRef(new Animated.Value(1)).current;
   const heartBump = useRef(new Animated.Value(1)).current;
@@ -130,27 +119,6 @@ export default function MainMenu({
       Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 11, useNativeDriver: true }),
       Animated.timing(railFade, { toValue: 1, duration: 600, delay: 180, useNativeDriver: true }),
     ]).start();
-  }, []);
-
-  // Drives the lives countdown and the daily challenge "next reset" label.
-  // Paused while backgrounded — the labels are derived from Date.now(), so a
-  // single update on foreground snaps the display back to current.
-  useEffect(() => {
-    let id: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (id !== null) return;
-      setNow(Date.now());
-      id = setInterval(() => setNow(Date.now()), 1000);
-    };
-    const stop = () => {
-      if (id !== null) { clearInterval(id); id = null; }
-    };
-
-    if (AppState.currentState === "active") start();
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") start(); else stop();
-    });
-    return () => { stop(); sub.remove(); };
   }, []);
 
   useEffect(() => {
@@ -195,8 +163,10 @@ export default function MainMenu({
   }, [openModal]);
 
   // Daily-challenge badge: progress chip ("3/12" / "Score 200" / "Beat 90s").
-  // Derived from the ticking `now` so a session that crosses midnight rolls over.
-  const todayKeyNow = todayKey(now);
+  // `todaysChallenge` is deterministic per date, so re-evaluating on each render
+  // (rather than a 1Hz ticker) is fine — midnight-rollover during an open
+  // session is a non-issue worth the perf win.
+  const todayKeyNow = todayKey();
   const challengeDef = todaysChallenge(todayKeyNow);
   const challengeTargetN = challengeTarget(challengeDef);
   const challengeCurrent = dailyChallenge.date === todayKeyNow
@@ -210,9 +180,6 @@ export default function MainMenu({
 
   const sceneIndex = stageImageIndex(gardenState);
   const canPlay = lives.count > 0;
-  const livesCountdownMs = msUntilNextLife(lives, now);
-  const livesCountdown = livesCountdownMs > 0 ? formatCountdown(livesCountdownMs) : null;
-  const dailyResetIn = formatHMS(msUntilTomorrow(now));
   const totalBoosters = boosters.hint + boosters.addrow;
 
   return (
@@ -220,17 +187,15 @@ export default function MainMenu({
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
       {/* Ambient life drifts across the whole scene */}
-      <AmbientLife w={SCREEN_W} h={SCREEN_H} />
+      <AmbientLife w={SCREEN_W} h={SCREEN_H} paused={mailOpen || settingsOpen || dailyLoginOpen || boosterOpen} />
 
       {/* ── Top-left cluster: lives + crowns (resources) ─────────────────── */}
-      <View style={ms.topLeft}>
+      <View style={[ms.topLeft, { top: insets.top + 12 }]}>
         <Animated.View style={[ms.livesPill, { transform: [{ scale: heartBump }] }]}>
           <Text style={ms.heartGlyph}>❤️</Text>
           <Text style={ms.livesCount}>{lives.count}</Text>
           <Text style={ms.livesMax}>/{MAX_LIVES}</Text>
-          {livesCountdown && (
-            <Text style={ms.livesTimer}>  {livesCountdown}</Text>
-          )}
+          <HeartPillTimer lives={lives} />
         </Animated.View>
 
         <TouchableOpacity
@@ -246,13 +211,15 @@ export default function MainMenu({
       </View>
 
       {/* ── Top-right cluster: mailbox + settings ────────────────────────── */}
-      <View style={ms.topRight}>
+      <View style={[ms.topRight, { top: insets.top + 12 }]}>
         <Animated.View style={{ transform: [{ scale: mailBump }] }}>
           <TouchableOpacity
             style={ms.iconBtn}
             onPress={() => { onOpenMailbox(); setMailOpen(true); }}
             activeOpacity={0.75}
             hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={unread > 0 ? `Open mailbox, ${unread} new` : "Open mailbox"}
           >
             <Text style={ms.iconBtnGlyph}>✉️</Text>
             {unread > 0 && (
@@ -268,6 +235,8 @@ export default function MainMenu({
           onPress={() => setSettingsOpen(true)}
           activeOpacity={0.75}
           hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Open settings"
         >
           <Text style={ms.iconBtnGlyph}>⚙</Text>
         </TouchableOpacity>
@@ -344,7 +313,7 @@ export default function MainMenu({
 
       {/* ── Bottom: garden card + dominant play button ───────────────────── */}
       <Animated.View
-        style={[ms.bottom, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+        style={[ms.bottom, { paddingBottom: insets.bottom + 18, opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
         <Garden
           crowns={crowns}
@@ -356,16 +325,19 @@ export default function MainMenu({
           style={[ms.playBtn, !canPlay && ms.playBtnDisabled]}
           onPress={() => canPlay && onPlay(endlessStage, "endless")}
           activeOpacity={canPlay ? 0.82 : 1}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canPlay }}
+          accessibilityLabel={
+            canPlay
+              ? (endlessStage > 1 ? `Continue endless stage ${endlessStage}` : "Play endless")
+              : "Out of lives — wait for hearts"
+          }
         >
           <View style={ms.playBtnInner}>
             <Text style={ms.playBtnText}>
               {canPlay ? (endlessStage > 1 ? "CONTINUE" : "PLAY") : "OUT OF LIVES"}
             </Text>
-            <Text style={ms.playBtnSub}>
-              {canPlay
-                ? (endlessStage > 1 ? `Stage ${endlessStage}` : "Tap to start")
-                : livesCountdown ? `Next heart in ${livesCountdown}` : "Wait for hearts"}
-            </Text>
+            <PlayBtnSubtitle lives={lives} canPlay={canPlay} endlessStage={endlessStage} />
           </View>
           <View style={ms.playBtnArrowWrap}>
             <Text style={ms.playBtnArrow}>{canPlay ? "▶" : "❤"}</Text>
@@ -444,16 +416,66 @@ function SceneBackground({
   return (
     <View style={style}>
       {layers.map((layer) => (
-        <Animated.Image
+        <AnimatedExpoImage
           key={layer.key}
           source={layer.source}
-          resizeMode="cover"
-          style={[StyleSheet.absoluteFill, { width: undefined, height: undefined, opacity: layer.anim }]}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          style={[StyleSheet.absoluteFill, { opacity: layer.anim }]}
         />
       ))}
       {children}
     </View>
   );
+}
+
+// ─── Lives countdown ────────────────────────────────────────────────────────
+// Used to live in MainMenu state with a 1Hz `setNow`, which re-rendered the
+// whole menu tree (and Garden + AmbientLife) once per second. Now isolated:
+// each subscriber owns its own ticker and only that leaf re-renders.
+
+function useLivesCountdownText(lives: LivesState): string | null {
+  // Only tick when there's a countdown to display — keeps full-lives leaves idle.
+  const needsTicker = lives.count < MAX_LIVES;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!needsTicker) return;
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id !== null) return;
+      setTick((t) => t + 1);
+      id = setInterval(() => setTick((t) => t + 1), 1000);
+    };
+    const stop = () => { if (id !== null) { clearInterval(id); id = null; } };
+    if (AppState.currentState === "active") start();
+    const sub = AppState.addEventListener("change", (s) => s === "active" ? start() : stop());
+    return () => { stop(); sub.remove(); };
+  }, [needsTicker]);
+  const ms = msUntilNextLife(lives);
+  return ms > 0 ? formatCountdown(ms) : null;
+}
+
+function HeartPillTimer({ lives }: { lives: LivesState }) {
+  const text = useLivesCountdownText(lives);
+  if (!text) return null;
+  return <Text style={ms.livesTimer}>  {text}</Text>;
+}
+
+function PlayBtnSubtitle({
+  lives, canPlay, endlessStage,
+}: { lives: LivesState; canPlay: boolean; endlessStage: number }) {
+  // Only mount the ticker when we'd actually display it.
+  if (canPlay) {
+    return (
+      <Text style={ms.playBtnSub}>{endlessStage > 1 ? `Stage ${endlessStage}` : "Tap to start"}</Text>
+    );
+  }
+  return <OutOfLivesSubtitle lives={lives} />;
+}
+
+function OutOfLivesSubtitle({ lives }: { lives: LivesState }) {
+  const text = useLivesCountdownText(lives);
+  return <Text style={ms.playBtnSub}>{text ? `Next heart in ${text}` : "Wait for hearts"}</Text>;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -562,6 +584,12 @@ const ms = StyleSheet.create({
     bottom: RAIL_BOTTOM,
     gap: 10,
     zIndex: 9,
+    // Soft cream-tinted scrim so the SideBadge labels stay WCAG-AA legible
+    // against any of the 6 garden photo backdrops.
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: "rgba(245,239,230,0.55)",
   },
   rightRail: {
     position: "absolute",
@@ -569,6 +597,10 @@ const ms = StyleSheet.create({
     bottom: RAIL_BOTTOM,
     gap: 10,
     zIndex: 9,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: "rgba(245,239,230,0.55)",
   },
 
   bottom: {
