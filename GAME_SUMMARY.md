@@ -30,6 +30,7 @@ Number Match is a mobile puzzle game built with React Native and Expo. The playe
 
 ### Game Screen (`screens/GameScreen.tsx`)
 - Header: back button, stage label (colour-coded per mode), pause/resume toggle.
+- Endless now has three colour goal boxes (Purple, Green, Yellow) above the stats. Each box has 3 slots; valid matches in that colour deposit the matched pair into the next open slot.
 - Stats bar: current score (animated bump on change), crown balance / timer, remaining active cells. In Freeze Mode the LEFT card also shows a `❄ N` frozen-cell sub-count.
 - In Tutorial mode: tip banner replaces the combo slot — shows the current step's instruction with a color-coded left border (coral = identical, teal = sum-to-10, gold = path).
 - Scrollable 7-column game board. A board-level pan gesture (`react-native-gesture-handler`) handles dragging; a floating drag tile follows the finger on the UI thread via Reanimated shared values.
@@ -145,6 +146,15 @@ Two cells form a valid pair if **both** of the following are true:
 
 Frozen cells are **active obstacles** — they cannot be dragged or matched, but they do block paths.
 
+### Colour Slot Goals
+Endless stages layer a colour-collection goal on top of the normal number/path match rules:
+
+- Every Endless cell is colour-coded Purple, Green, or Yellow.
+- Each colour has a top container with 3 slots.
+- A valid match deposits the matched pair into the first open slot for that pair's colour.
+- Endless stages complete when all 9 colour slots are filled, even if unmatched cells remain on the board.
+- Colours are assigned by value so normal same-number and sum-to-10 pairs naturally share a colour: `1/5/9 = Purple`, `2/4/6/8 = Green`, `3/7 = Yellow`.
+
 ### Drag Flow
 The board uses a single board-level pan gesture. At touch-down, a worklet checks the `dragMapSV` shared snapshot to decide whether the finger landed on a draggable cell:
 
@@ -159,7 +169,7 @@ The board uses a single board-level pan gesture. At touch-down, a worklet checks
 When every cell in a row has been matched and deactivated, the row flashes and is permanently removed from the board (+25 points per row). Multiple rows cleared at once give a combined bonus and toast.
 
 ### Stage Complete
-When all active cells are gone the stage is complete. The player earns **+1 crown** (a single crown per Endless / Freeze / Golden stage; Time Attack awards +1 crown per board cleared during the timer). A summary modal shows score, best score, and a new-best indicator. They can proceed to the next stage or return to the main menu. Crowns can later be invested into the [Garden Meta](#garden-meta) progression on the main menu.
+Endless stages complete when all colour slots are filled. Freeze and Tutorial stages complete when all active cells are gone. Golden Garden completes when all gem targets are met. The player earns **+1 crown** (a single crown per Endless / Freeze / Golden stage; Time Attack awards +1 crown per board cleared during the timer). A summary modal shows score, best score, and a new-best indicator. They can proceed to the next stage or return to the main menu. Crowns can later be invested into the [Garden Meta](#garden-meta) progression on the main menu.
 
 ### Dead-End Detection
 If the player runs out of Add Row uses **and** no valid pairs exist, a **No Moves Left** modal appears automatically, offering Restart or Main Menu.

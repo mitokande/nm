@@ -22,6 +22,62 @@ import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-nat
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COLS = 7;
+const COLOR_SLOT_CAPACITY = 3;
+
+type MatchColor = "purple" | "green" | "yellow";
+
+interface ColorGoalMeta {
+  key: MatchColor;
+  label: string;
+  bg: string;
+  soft: string;
+  cell: string;
+  border: string;
+  ink: string;
+}
+
+const COLOR_GOALS: ColorGoalMeta[] = [
+  {
+    key: "purple",
+    label: "Purple",
+    bg: "#fbf5ff",
+    soft: "rgba(141,78,216,0.14)",
+    cell: "#a76be8",
+    border: "#7d3cc9",
+    ink: "#7d3cc9",
+  },
+  {
+    key: "green",
+    label: "Green",
+    bg: "#f5fbec",
+    soft: "rgba(116,184,43,0.16)",
+    cell: "#8ed42e",
+    border: "#5ea41f",
+    ink: "#5f9f21",
+  },
+  {
+    key: "yellow",
+    label: "Yellow",
+    bg: "#fff8df",
+    soft: "rgba(245,174,18,0.18)",
+    cell: "#ffc51c",
+    border: "#f29a00",
+    ink: "#e98a00",
+  },
+];
+
+const COLOR_BY_KEY = Object.fromEntries(COLOR_GOALS.map((g) => [g.key, g])) as Record<MatchColor, ColorGoalMeta>;
+const VALUE_COLOR: Record<number, MatchColor> = {
+  1: "purple",
+  2: "green",
+  3: "yellow",
+  4: "green",
+  5: "purple",
+  6: "green",
+  7: "yellow",
+  8: "green",
+  9: "purple",
+};
 
 interface FreezeStage { id: number; values: number[]; frozenIndices: number[]; }
 
@@ -50,9 +106,17 @@ interface Cell {
   id: number;
   value: number;
   active: boolean;
+  color: MatchColor;
   gem?: GemType;
   frozen?: boolean;
 }
+
+interface ColorSlot {
+  id: number;
+  values: [number, number];
+}
+
+type ColorSlots = Record<MatchColor, ColorSlot[]>;
 
 interface FloatItem {
   id: number;
@@ -160,8 +224,21 @@ function findHint(cells: Cell[], destroyedRows: number[] = []): [number, number]
   return null;
 }
 
+function colorForValue(value: number): MatchColor {
+  return VALUE_COLOR[value] ?? COLOR_GOALS[value % COLOR_GOALS.length].key;
+}
+
 function buildCells(values: number[], gems?: Record<number, GemType>): Cell[] {
-  return values.map((v, i) => ({ id: i, value: v, active: true, gem: gems?.[i] }));
+  return values.map((v, i) => ({ id: i, value: v, active: true, color: colorForValue(v), gem: gems?.[i] }));
+}
+
+function defaultColorSlots(): ColorSlots {
+  return { purple: [], green: [], yellow: [] };
+}
+
+function colorCellStyle(color: MatchColor) {
+  const m = COLOR_BY_KEY[color];
+  return { backgroundColor: m.cell, borderColor: m.border };
 }
 
 function getGoldenStage(stage: number): GoldenStage | undefined {
@@ -351,8 +428,10 @@ export default function GameScreen({
   bonusHints = 0, bonusAdds = 0,
   onCrownsEarned, onStageAdvance, onStageCleared, onBack, onTutorialComplete,
 }: Props) {
+  const usesColorGoals = mode === "endless";
   const [stage, setStage] = useState(initialStage);
   const [cells, setCells] = useState<Cell[]>(() => buildCellsForMode(initialStage, mode));
+  const [colorSlots, setColorSlots] = useState<ColorSlots>(() => defaultColorSlots());
   const initialTargets = mode === "golden" ? (getGoldenStage(initialStage)?.targets ?? {}) : {};
   const [targets, setTargets] = useState<Partial<Record<GemType, number>>>(initialTargets);
   const [collected, setCollected] = useState<Partial<Record<GemType, number>>>({});
@@ -398,7 +477,7 @@ export default function GameScreen({
   // First-entry micro-tutorial overlay for Golden / Freeze.
   const [modeIntro, setModeIntro] = useState(false);
   const [matchLine, setMatchLine] = useState<[number, number] | null>(null);
-  const [matchIsSame, setMatchIsSame] = useState(true);
+  const [matchTint, setMatchTint] = useState(C.coral);
   const [thawingCells, setThawingCells] = useState<number[]>([]);
   const [winNewBestReady, setWinNewBestReady] = useState(false);
 
@@ -409,6 +488,7 @@ export default function GameScreen({
   const comboTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const floatIdRef = useRef(0);
+  const colorSlotIdRef = useRef(0);
 
   // Animation values
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -466,6 +546,11 @@ export default function GameScreen({
   // background auto-pause so we don't stack it on a win/time-up modal.
   const bgPausableRef = useRef(false);
   bgPausableRef.current = mode === "timeattack" && !timeUp && !stageComplete && !paused;
+
+  const colorGoalComplete = useMemo(
+    () => usesColorGoals && COLOR_GOALS.every((g) => colorSlots[g.key].length >= COLOR_SLOT_CAPACITY),
+    [colorSlots, usesColorGoals],
+  );
 
   // ── Analytics: run lifecycle ────────────────────────────────────────────────
   // A "run" spans this screen session (one life spent in App). It ends when the
@@ -724,18 +809,23 @@ export default function GameScreen({
   // board, which causes a visible stutter right after each match on mid-range
   // Android. Defer to after the match animation has yielded the JS thread.
   useEffect(() => {
+    if (usesColorGoals && !colorGoalComplete && !stageComplete && !noMoves && cells.length > 0 && cells.every((c) => !c.active)) {
+      playSound("no_moves", 0.7);
+      setNoMoves(true);
+      return;
+    }
     if (stageComplete || noMoves || timeUp || adds > 0 || clearingRows.length > 0 || poppingPair !== null || mode === "tutorial") return;
     const rem = cells.filter((c) => c.active).length;
     if (rem === 0) return;
     const handle = InteractionManager.runAfterInteractions(() => {
       if (findHint(cells, destroyedRows) === null) {
         if (mode === "timeattack") {
-          const remaining = cells.filter((c) => c.active).map((c) => c.value);
+          const remaining = cells.filter((c) => c.active).map((c) => ({ value: c.value, color: c.color }));
           if (remaining.length > 0) {
             setCells((curr) => {
               const next = [...curr];
               let nextId = next.length;
-              for (const v of remaining) next.push({ id: nextId++, value: v, active: true });
+              for (const item of remaining) next.push({ id: nextId++, value: item.value, color: item.color, active: true });
               return next;
             });
           }
@@ -746,7 +836,7 @@ export default function GameScreen({
       }
     });
     return () => handle.cancel();
-  }, [cells, adds, destroyedRows, stageComplete, clearingRows, poppingPair, noMoves, timeUp, mode]);
+  }, [cells, adds, destroyedRows, stageComplete, clearingRows, poppingPair, noMoves, timeUp, mode, usesColorGoals, colorGoalComplete]);
 
   useEffect(() => {
     const totalRows = Math.ceil(cells.length / COLS);
@@ -781,6 +871,7 @@ export default function GameScreen({
 
   useEffect(() => {
     if (mode === "golden" || mode === "timeattack") return;
+    if (usesColorGoals) return;
     const rem = cells.filter((c) => c.active).length;
     if (rem === 0 && cells.length > 0 && !stageComplete && clearingRows.length === 0) {
       setStageComplete(true);
@@ -800,7 +891,20 @@ export default function GameScreen({
         }
       }
     }
-  }, [cells, clearingRows, mode]);
+  }, [cells, clearingRows, mode, usesColorGoals]);
+
+  useEffect(() => {
+    if (!usesColorGoals || !colorGoalComplete || stageComplete) return;
+    setStageComplete(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    playSound("stage_win", 0.85);
+    onCrownsEarned(1);
+    track("stage_complete", { mode, stage, score, objective: "color_slots" });
+    if (score > bestScore) {
+      setBestScore(score);
+      AsyncStorage.setItem(`hiscore_${stage}`, String(score)).catch(onStorageError("hiscore"));
+    }
+  }, [usesColorGoals, colorGoalComplete, stageComplete, mode, stage, score, bestScore]);
 
   useEffect(() => {
     if (mode !== "timeattack" || timeUp) return;
@@ -1004,8 +1108,9 @@ export default function GameScreen({
       const a = cells[selected];
       const b = cells[idx];
       const isSame = a.value === b.value;
-      const matchColor = isSame ? C.coral : C.teal;
-      setMatchIsSame(isSame);
+      const pairColor = a.color === b.color ? a.color : null;
+      const matchColor = pairColor ? COLOR_BY_KEY[pairColor].border : isSame ? C.coral : C.teal;
+      setMatchTint(matchColor);
       const earned = (isSame ? 5 : 10) + combo * 2;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       if (combo >= 1) playSound("combo", Math.min(1, 0.55 + combo * 0.08));
@@ -1060,6 +1165,13 @@ export default function GameScreen({
             return c;
           })
         );
+        if (usesColorGoals && pairColor) {
+          const slot: ColorSlot = { id: ++colorSlotIdRef.current, values: [a.value, b.value] };
+          setColorSlots((prev) => {
+            if (prev[pairColor].length >= COLOR_SLOT_CAPACITY) return prev;
+            return { ...prev, [pairColor]: [...prev[pairColor], slot] };
+          });
+        }
         setPoppingPair(null);
         if (thawedIds.length > 0) {
           setThawingCells(thawedIds);
@@ -1123,11 +1235,11 @@ export default function GameScreen({
 
   function performAddRow() {
     setCells((curr) => {
-      const remaining = curr.filter((c) => c.active).map((c) => c.value);
+      const remaining = curr.filter((c) => c.active).map((c) => ({ value: c.value, color: c.color }));
       if (remaining.length === 0) return curr;
       const next = [...curr];
       let nextId = next.length;
-      for (const v of remaining) next.push({ id: nextId++, value: v, active: true });
+      for (const item of remaining) next.push({ id: nextId++, value: item.value, color: item.color, active: true });
       return next;
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1271,6 +1383,7 @@ export default function GameScreen({
       onStageAdvance?.(mode, s);
     }
     setCells(buildCellsForMode(s, mode));
+    setColorSlots(defaultColorSlots());
     setTargets(mode === "golden" ? (getGoldenStage(s)?.targets ?? {}) : {});
     setCollected({});
     wonRef.current = false;
@@ -1421,6 +1534,65 @@ export default function GameScreen({
         </TouchableOpacity>
       </View>
 
+      {usesColorGoals && (
+        <View style={gs.colorGoalsRow}>
+          {COLOR_GOALS.map((goal) => {
+            const slots = colorSlots[goal.key];
+            return (
+              <View
+                key={goal.key}
+                style={[
+                  gs.colorGoalCard,
+                  { backgroundColor: goal.bg, borderColor: goal.border, shadowColor: goal.border },
+                ]}
+              >
+                <View style={gs.colorGoalTitleRow}>
+                  <View style={[gs.colorGoalIcon, { backgroundColor: goal.soft, borderColor: goal.border }]}>
+                    <Text style={[gs.colorGoalIconText, { color: goal.ink }]}>
+                      {goal.label.charAt(0)}
+                    </Text>
+                  </View>
+                  <Text style={[gs.colorGoalTitle, { color: goal.ink }]}>{goal.label}</Text>
+                </View>
+                <View style={gs.colorGoalSlots}>
+                  {Array.from({ length: COLOR_SLOT_CAPACITY }).map((_, i) => {
+                    const slot = slots[i];
+                    return (
+                      <View
+                        key={slot?.id ?? `${goal.key}-${i}`}
+                        style={[
+                          gs.colorGoalSlot,
+                          { backgroundColor: goal.soft, borderColor: slot ? goal.border : "rgba(26,29,46,0.14)" },
+                        ]}
+                      >
+                        {slot ? (
+                          <Text style={[gs.colorGoalSlotText, { color: goal.ink }]}>
+                            {slot.values[0]} {slot.values[1]}
+                          </Text>
+                        ) : (
+                          <Text style={gs.colorGoalSlotEmpty}> </Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+                <View style={gs.colorGoalDots}>
+                  {Array.from({ length: COLOR_SLOT_CAPACITY }).map((_, i) => (
+                    <View
+                      key={`${goal.key}-dot-${i}`}
+                      style={[
+                        gs.colorGoalDot,
+                        { backgroundColor: i < slots.length ? goal.border : "rgba(26,29,46,0.18)" },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
       {/* Stats */}
       <View style={gs.statsRow}>
         <View
@@ -1569,6 +1741,7 @@ export default function GameScreen({
                   const isThawing = thawingCells.includes(cell.id);
                   const isFrozen = !!cell.frozen;
                   const ghost = !cell.active;
+                  const cellGoalColor = usesColorGoals && cell.active && !isFrozen ? cell.color : null;
 
                   let scaleVal: any = 1;
                   let scaleSrc = "idle";
@@ -1609,16 +1782,18 @@ export default function GameScreen({
                         style={[
                           gs.cell,
                           ghost && gs.cellGhost,
+                          cellGoalColor && colorCellStyle(cellGoalColor),
                           isFrozen && gs.cellFrozen,
                           (isHint || isHover) && gs.cellHint,
-                          isSelected && gs.cellSelected,
+                          isSelected && (cellGoalColor ? gs.cellSelectedColored : gs.cellSelected),
                           isPopping && gs.cellPopping,
-                          isPopping && { backgroundColor: matchIsSame ? C.coral : C.teal, borderColor: matchIsSame ? C.coral : C.teal },
+                          isPopping && { backgroundColor: matchTint, borderColor: matchTint },
                         ]}
                       >
                         {!isFrozen && !isSelected && (
                           <Text style={[
                             gs.cellNum,
+                            cellGoalColor && !(isHint || isHover || isPopping) && gs.cellNumColored,
                             ghost && gs.cellNumGhost,
                             isPopping && gs.cellNumPopping,
                           ]}>
@@ -1648,8 +1823,8 @@ export default function GameScreen({
                 style={[
                   gs.matchLine,
                   {
-                    backgroundColor: matchIsSame ? C.coral : C.teal,
-                    shadowColor: matchIsSame ? C.coral : C.teal,
+                    backgroundColor: matchTint,
+                    shadowColor: matchTint,
                     left: (p1x + p2x) / 2 - len / 2,
                     top: (p1y + p2y) / 2 - 2,
                     width: len,
@@ -1711,11 +1886,18 @@ export default function GameScreen({
 
       {/* How-to */}
       {mode !== "tutorial" && <View style={gs.howto}>
-        <Text style={gs.howtoText}>
-          Drag <Text style={gs.howtoEm}>identical</Text> numbers together, or pairs that{" "}
-          <Text style={gs.howtoEm}>sum to 10</Text>. Connect along rows, columns,
-          diagonals, or across line ends.
-        </Text>
+        {usesColorGoals ? (
+          <Text style={gs.howtoText}>
+            Match <Text style={gs.howtoEm}>same-color</Text> numbers to fill all three boxes.
+            Identical numbers and pairs that <Text style={gs.howtoEm}>sum to 10</Text> still match.
+          </Text>
+        ) : (
+          <Text style={gs.howtoText}>
+            Drag <Text style={gs.howtoEm}>identical</Text> numbers together, or pairs that{" "}
+            <Text style={gs.howtoEm}>sum to 10</Text>. Connect along rows, columns,
+            diagonals, or across line ends.
+          </Text>
+        )}
       </View>}
 
       {/* Mega combo burst overlay */}
@@ -1742,19 +1924,25 @@ export default function GameScreen({
       )}
 
       {/* Floating drag tile — follows the finger while dragging a number */}
-      {selected !== null && cells[selected] && (
-        <Reanimated.View
-          pointerEvents="none"
-          style={[
-            gs.cell,
-            gs.cellSelected,
-            { position: "absolute", top: 0, left: 0, zIndex: 600 },
-            dragTileStyle,
-          ]}
-        >
-          <Text style={[gs.cellNum, gs.cellNumSelected]}>{cells[selected].value}</Text>
-        </Reanimated.View>
-      )}
+      {selected !== null && cells[selected] && (() => {
+        const dragColor = usesColorGoals && cells[selected].active ? cells[selected].color : null;
+        return (
+          <Reanimated.View
+            pointerEvents="none"
+            style={[
+              gs.cell,
+              dragColor ? colorCellStyle(dragColor) : gs.cellSelected,
+              dragColor && gs.cellDragColored,
+              { position: "absolute", top: 0, left: 0, zIndex: 600 },
+              dragTileStyle,
+            ]}
+          >
+            <Text style={[gs.cellNum, dragColor ? gs.cellNumColored : gs.cellNumSelected]}>
+              {cells[selected].value}
+            </Text>
+          </Reanimated.View>
+        );
+      })()}
 
       {/* Flying scores overlay */}
       <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 500 }}>
@@ -1835,9 +2023,9 @@ export default function GameScreen({
               </>
             ) : (
               <>
-                <Text style={gs.winEmoji}>{mode === "golden" ? "💎" : mode === "freeze" ? "🧊" : "♛"}</Text>
+                <Text style={gs.winEmoji}>{mode === "golden" ? "💎" : mode === "freeze" ? "🧊" : usesColorGoals ? "3/3" : "♛"}</Text>
                 <Text style={gs.cardTitle}>
-                  {mode === "golden" ? "Garden Bloomed!" : mode === "freeze" ? "Board Thawed!" : "Stage Cleared!"}
+                  {mode === "golden" ? "Garden Bloomed!" : mode === "freeze" ? "Board Thawed!" : usesColorGoals ? "Boxes Filled!" : "Stage Cleared!"}
                 </Text>
                 {mode === "golden" ? (
                   <View style={gs.winStats}>
@@ -1956,15 +2144,19 @@ export default function GameScreen({
         <View style={gs.overlay}>
           <View style={gs.card}>
             <Text style={[gs.winEmoji, { color: C.danger }]}>✕</Text>
-            <Text style={gs.cardTitle}>{softLock ? "Goals Unreachable" : "No Moves Left"}</Text>
+            <Text style={gs.cardTitle}>
+              {usesColorGoals && !colorGoalComplete ? "Slots Unfilled" : softLock ? "Goals Unreachable" : "No Moves Left"}
+            </Text>
             <Text style={gs.howtoText}>
-              {softLock
+              {usesColorGoals && !colorGoalComplete
+                ? "The board ran out before every color box was filled."
+                : softLock
                 ? "The remaining gems can no longer complete this garden's goals."
                 : mode === "golden"
                 ? "No valid pairs remain and your goals aren't met yet."
                 : "No valid pairs remain and you're out of adds."}
             </Text>
-            {!softLock && (
+            {!softLock && !(usesColorGoals && !colorGoalComplete && cells.every((c) => !c.active)) && (
               <TouchableOpacity style={gs.secondaryBtn} onPress={handleContinueAdds} activeOpacity={0.85}>
                 <Text style={gs.secondaryBtnText}>📺  +5 Adds — Keep Going</Text>
               </TouchableOpacity>
@@ -2057,6 +2249,68 @@ const gs = StyleSheet.create({
   },
   statLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.8, color: "rgba(26,29,46,0.42)", marginBottom: 2 },
   statValue: { fontSize: 20, fontWeight: "900", color: C.ink },
+
+  colorGoalsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 10,
+  },
+  colorGoalCard: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 9,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  colorGoalTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8,
+  },
+  colorGoalIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  colorGoalIconText: { fontSize: 14, fontWeight: "900" },
+  colorGoalTitle: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  colorGoalSlots: {
+    flexDirection: "row",
+    gap: 5,
+  },
+  colorGoalSlot: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 9,
+    borderWidth: 1.2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  colorGoalSlotText: { fontSize: 12, fontWeight: "900" },
+  colorGoalSlotEmpty: { fontSize: 12 },
+  colorGoalDots: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 5,
+    marginTop: 7,
+  },
+  colorGoalDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
 
   goalRow: {
     flexDirection: "row",
@@ -2165,6 +2419,16 @@ const gs = StyleSheet.create({
   },
   cellGhost: { backgroundColor: "transparent" },
   cellSelected: { backgroundColor: C.select, borderColor: C.selectShadow },
+  cellSelectedColored: { borderColor: "#fffaf3", borderWidth: 2 },
+  cellDragColored: {
+    borderColor: "#fffaf3",
+    borderWidth: 2,
+    shadowColor: "rgba(26,29,46,1)",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    elevation: 8,
+  },
   cellHint: { backgroundColor: C.hint, borderColor: "#c4960e" },
   cellPopping: { backgroundColor: C.coral, borderColor: C.coral },
 
@@ -2183,6 +2447,13 @@ const gs = StyleSheet.create({
   cellNum: {
     fontSize: CELL_SIZE > 36 ? 18 : 14,
     fontWeight: "700", color: C.ink,
+  },
+  cellNumColored: {
+    color: "#fff",
+    fontWeight: "900",
+    textShadowColor: "rgba(26,29,46,0.26)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   cellNumGhost: { color: Platform.OS === "ios" ? "#b8ab90" : C.ghost },
   cellNumFrozen: { color: "#2a6fa8", fontWeight: "900" },
