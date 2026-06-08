@@ -22,7 +22,6 @@ import Reanimated, { useSharedValue, useAnimatedStyle, runOnJS } from "react-nat
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COLS = 7;
-const COLOR_SLOT_CAPACITY = 3;
 
 type MatchColor = "purple" | "green" | "yellow";
 
@@ -84,6 +83,17 @@ interface FreezeStage { id: number; values: number[]; frozenIndices: number[]; }
 const STAGES: Record<number, number[]> = Object.fromEntries(
   levelsJson.endless.map((s) => [s.id, s.values])
 );
+// Per-stage color slot targets — falls back to DEFAULT_COLOR_GOAL when a stage
+// omits `goals`. Authored in levels.json.
+const DEFAULT_COLOR_GOAL: Record<MatchColor, number> = { purple: 3, green: 3, yellow: 3 };
+const ENDLESS_GOALS: Record<number, Record<MatchColor, number>> = Object.fromEntries(
+  (levelsJson.endless as Array<{ id: number; goals?: Record<MatchColor, number> }>)
+    .filter((s) => !!s.goals)
+    .map((s) => [s.id, s.goals as Record<MatchColor, number>])
+);
+function colorCapsFor(stage: number): Record<MatchColor, number> {
+  return ENDLESS_GOALS[stage] ?? DEFAULT_COLOR_GOAL;
+}
 // Sorted endless stage ids. ENDLESS_MAX is the last reachable stage (drives the
 // "Next Stage / Play Again" cap); ENDLESS_IDS is also the Time-Attack rotation.
 const ENDLESS_IDS: number[] = Object.keys(STAGES).map(Number).sort((a, b) => a - b);
@@ -240,10 +250,11 @@ function warnIfColorUnsolvable(stageId: number, cells: Cell[]) {
   if (!__DEV__) return;
   const counts: Record<MatchColor, number> = { purple: 0, green: 0, yellow: 0 };
   for (const c of cells) counts[c.color]++;
-  const need = COLOR_SLOT_CAPACITY * 2;
+  const caps = colorCapsFor(stageId);
   for (const k of ["purple", "green", "yellow"] as MatchColor[]) {
+    const need = caps[k] * 2;
     if (counts[k] < need) {
-      console.warn(`[color-goals] endless stage ${stageId}: only ${counts[k]} ${k} cells — needs ${need} to complete.`);
+      console.warn(`[color-goals] endless stage ${stageId}: only ${counts[k]} ${k} cells — needs ${need} (${caps[k]} pairs) to complete.`);
     }
   }
 }
@@ -509,6 +520,15 @@ export default function GameScreen({
     green: new Animated.Value(0),
     yellow: new Animated.Value(0),
   }).current;
+  // Mirror of colorSlots so the bin-order bonus can read current state inside a
+  // setTimeout callback without stale-closure risk.
+  const colorSlotsRef = useRef<ColorSlots>(defaultColorSlots());
+  // First color to fill its bin this stage — awards +1 crown bonus on completion.
+  const firstFilledColorRef = useRef<MatchColor | null>(null);
+  // Same-color streak: consecutive matches of the same color. Resets on any
+  // different-color match or stage start. Streak >= 3 multiplies earned score by 1.5.
+  const lastMatchColorRef = useRef<MatchColor | null>(null);
+  const sameColorStreakRef = useRef(0);
 
   // Animation values
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -567,9 +587,10 @@ export default function GameScreen({
   const bgPausableRef = useRef(false);
   bgPausableRef.current = mode === "timeattack" && !timeUp && !stageComplete && !paused;
 
+  const colorCaps = useMemo(() => colorCapsFor(stage), [stage]);
   const colorGoalComplete = useMemo(
-    () => usesColorGoals && COLOR_GOALS.every((g) => colorSlots[g.key].length >= COLOR_SLOT_CAPACITY),
-    [colorSlots, usesColorGoals],
+    () => usesColorGoals && COLOR_GOALS.every((g) => colorSlots[g.key].length >= colorCaps[g.key]),
+    [colorSlots, usesColorGoals, colorCaps],
   );
 
   // ── Analytics: run lifecycle ────────────────────────────────────────────────
@@ -1131,7 +1152,19 @@ export default function GameScreen({
       const pairColor = a.color === b.color ? a.color : null;
       const matchColor = pairColor ? COLOR_BY_KEY[pairColor].border : isSame ? C.coral : C.teal;
       setMatchTint(matchColor);
-      const earned = (isSame ? 5 : 10) + combo * 2;
+      // Same-color streak — bookkeeping happens whether or not bins gate the stage.
+      let colorStreak = 0;
+      if (usesColorGoals && pairColor) {
+        colorStreak = lastMatchColorRef.current === pairColor ? sameColorStreakRef.current + 1 : 1;
+        sameColorStreakRef.current = colorStreak;
+        lastMatchColorRef.current = pairColor;
+      }
+      const colorStreakBonus = colorStreak >= 3;
+      let earned = (isSame ? 5 : 10) + combo * 2;
+      if (colorStreakBonus) earned = Math.round(earned * 1.5);
+      if (usesColorGoals && pairColor && colorStreak === 3) {
+        showToast(`${COLOR_BY_KEY[pairColor].label} streak! +50% score`, "win", 1100);
+      }
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       if (combo >= 1) playSound("combo", Math.min(1, 0.55 + combo * 0.08));
       else playSound("match", 0.7);
@@ -1186,27 +1219,34 @@ export default function GameScreen({
           })
         );
         if (usesColorGoals && pairColor) {
-          const slot: ColorSlot = { id: ++colorSlotIdRef.current, values: [a.value, b.value] };
-          setColorSlots((prev) => {
-            if (prev[pairColor].length >= COLOR_SLOT_CAPACITY) {
-              const shake = colorShakeAnims[pairColor];
-              shake.stopAnimation();
-              shake.setValue(0);
-              Animated.sequence([
-                Animated.timing(shake, { toValue: 1, duration: 60, useNativeDriver: true }),
-                Animated.timing(shake, { toValue: -1, duration: 60, useNativeDriver: true }),
-                Animated.timing(shake, { toValue: 0.6, duration: 50, useNativeDriver: true }),
-                Animated.timing(shake, { toValue: 0, duration: 50, useNativeDriver: true }),
-              ]).start();
-              if (!colorOverflowedRef.current.has(pairColor)) {
-                colorOverflowedRef.current.add(pairColor);
-                const label = COLOR_BY_KEY[pairColor].label;
-                showToast(`${label} full — go for another color`, "warn", 1400);
-              }
-              return prev;
+          const cap = colorCaps[pairColor];
+          const current = colorSlotsRef.current[pairColor];
+          if (current.length >= cap) {
+            const shake = colorShakeAnims[pairColor];
+            shake.stopAnimation();
+            shake.setValue(0);
+            Animated.sequence([
+              Animated.timing(shake, { toValue: 1, duration: 60, useNativeDriver: true }),
+              Animated.timing(shake, { toValue: -1, duration: 60, useNativeDriver: true }),
+              Animated.timing(shake, { toValue: 0.6, duration: 50, useNativeDriver: true }),
+              Animated.timing(shake, { toValue: 0, duration: 50, useNativeDriver: true }),
+            ]).start();
+            if (!colorOverflowedRef.current.has(pairColor)) {
+              colorOverflowedRef.current.add(pairColor);
+              showToast(`${COLOR_BY_KEY[pairColor].label} full — go for another color`, "warn", 1400);
             }
-            return { ...prev, [pairColor]: [...prev[pairColor], slot] };
-          });
+          } else {
+            const slot: ColorSlot = { id: ++colorSlotIdRef.current, values: [a.value, b.value] };
+            const nextSlots = { ...colorSlotsRef.current, [pairColor]: [...current, slot] };
+            colorSlotsRef.current = nextSlots;
+            setColorSlots(nextSlots);
+            if (nextSlots[pairColor].length === cap && firstFilledColorRef.current === null) {
+              firstFilledColorRef.current = pairColor;
+              onCrownsEarned(1);
+              showToast(`${COLOR_BY_KEY[pairColor].label} filled first! ♛ +1`, "win", 1500);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+          }
         }
         setPoppingPair(null);
         if (thawedIds.length > 0) {
@@ -1420,8 +1460,13 @@ export default function GameScreen({
     }
     const nextCells = buildCellsForMode(s, mode);
     setCells(nextCells);
-    setColorSlots(defaultColorSlots());
+    const freshSlots = defaultColorSlots();
+    colorSlotsRef.current = freshSlots;
+    setColorSlots(freshSlots);
     colorOverflowedRef.current = new Set();
+    firstFilledColorRef.current = null;
+    lastMatchColorRef.current = null;
+    sameColorStreakRef.current = 0;
     if (mode === "endless") warnIfColorUnsolvable(s, nextCells);
     setTargets(mode === "golden" ? (getGoldenStage(s)?.targets ?? {}) : {});
     setCollected({});
@@ -1577,7 +1622,8 @@ export default function GameScreen({
         <View style={gs.colorGoalsRow}>
           {COLOR_GOALS.map((goal) => {
             const slots = colorSlots[goal.key];
-            const full = slots.length >= COLOR_SLOT_CAPACITY;
+            const cap = colorCaps[goal.key];
+            const full = slots.length >= cap;
             const shake = colorShakeAnims[goal.key];
             const shakeX = shake.interpolate({ inputRange: [-1, 0, 1], outputRange: [-6, 0, 6] });
             return (
@@ -1598,30 +1644,29 @@ export default function GameScreen({
                   </View>
                   <Text style={[gs.colorGoalTitle, { color: goal.ink }]}>{goal.label}</Text>
                 </View>
-                <View style={gs.colorGoalSlots}>
-                  {Array.from({ length: COLOR_SLOT_CAPACITY }).map((_, i) => {
+                <View style={[gs.colorGoalSlots, cap > 3 && gs.colorGoalSlotsCompact]}>
+                  {Array.from({ length: cap }).map((_, i) => {
                     const slot = slots[i];
                     return (
                       <View
                         key={slot?.id ?? `${goal.key}-${i}`}
                         style={[
                           gs.colorGoalSlot,
-                          { backgroundColor: goal.soft, borderColor: slot ? goal.border : "rgba(26,29,46,0.14)" },
+                          cap > 3 && gs.colorGoalSlotCompact,
+                          { backgroundColor: slot && cap > 3 ? goal.border : goal.soft, borderColor: slot ? goal.border : "rgba(26,29,46,0.14)" },
                         ]}
                       >
-                        {slot ? (
+                        {slot && cap <= 3 ? (
                           <Text style={[gs.colorGoalSlotText, { color: goal.ink }]}>
                             {slot.values[0]} {slot.values[1]}
                           </Text>
-                        ) : (
-                          <Text style={gs.colorGoalSlotEmpty}> </Text>
-                        )}
+                        ) : null}
                       </View>
                     );
                   })}
                 </View>
                 <View style={gs.colorGoalDots}>
-                  {Array.from({ length: COLOR_SLOT_CAPACITY }).map((_, i) => (
+                  {Array.from({ length: cap }).map((_, i) => (
                     <View
                       key={`${goal.key}-dot-${i}`}
                       style={[
@@ -2340,6 +2385,7 @@ const gs = StyleSheet.create({
     flexDirection: "row",
     gap: 5,
   },
+  colorGoalSlotsCompact: { gap: 3 },
   colorGoalSlot: {
     flex: 1,
     minHeight: 34,
@@ -2348,6 +2394,7 @@ const gs = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  colorGoalSlotCompact: { minHeight: 18, borderRadius: 5, borderWidth: 1 },
   colorGoalSlotText: { fontSize: 12, fontWeight: "900" },
   colorGoalSlotEmpty: { fontSize: 12 },
   colorGoalDots: {
