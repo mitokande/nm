@@ -73,6 +73,8 @@ interface Props {
   onToggleNotifications: (next: boolean) => void;
   onDeleteAllData: () => void;
   onResetTutorial?: () => void;
+  /** Prototype branch: open the Number Sort lab. */
+  onOpenSortLab?: () => void;
   /** DEV-only: add crowns for debugging. */
   onDebugAddCrowns?: (amount: number) => void;
 }
@@ -85,7 +87,7 @@ export default function MainMenu({
   onInvestGarden, onPlay, onClaimMail, onOpenMailbox, onClaimDailyLogin, onBuyBooster,
   openModal, onModalConsumed,
   onToggleSound, onToggleHaptics, onToggleNotifications,
-  onDeleteAllData, onResetTutorial, onDebugAddCrowns,
+  onDeleteAllData, onResetTutorial, onOpenSortLab, onDebugAddCrowns,
 }: Props) {
   const [endlessStage, setEndlessStage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -240,6 +242,17 @@ export default function MainMenu({
         >
           <Text style={ms.iconBtnGlyph}>⚙</Text>
         </TouchableOpacity>
+        {onOpenSortLab && (
+          <TouchableOpacity
+            style={[ms.iconBtn, ms.sortLabBtn]}
+            onPress={onOpenSortLab}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Sort Lab prototype"
+          >
+            <Text style={ms.iconBtnGlyph}>🧪</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── Left rail: time-gated events ─────────────────────────────────── */}
@@ -506,6 +519,7 @@ const ms = StyleSheet.create({
     zIndex: 10,
   },
 
+  sortLabBtn: { backgroundColor: "#fff6e3", borderColor: C.crown },
   iconBtn: {
     width: 38,
     height: 38,

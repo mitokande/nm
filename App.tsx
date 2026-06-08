@@ -6,6 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MainMenu from "./screens/MainMenu";
 import GameScreen from "./screens/GameScreen";
+import NumberSortScreen from "./screens/NumberSortScreen";
 import SplashScreen from "./screens/SplashScreen";
 import { GardenState, defaultGardenState, normalizeGardenState, investCrowns } from "./screens/gardenData";
 import {
@@ -43,7 +44,7 @@ import ErrorBoundary from "./screens/ErrorBoundary";
 // Initialize crash reporting + analytics as early as possible (before first render).
 initTelemetry();
 
-type Screen = "menu" | "game";
+type Screen = "menu" | "game" | "sortlab";
 export type GameMode = "endless" | "golden" | "timeattack" | "freeze" | "tutorial";
 
 function App() {
@@ -528,7 +529,11 @@ function App() {
       renderToHardwareTextureAndroid
       needsOffscreenAlphaCompositing
     >
-      {screen === "game" ? (
+      {screen === "sortlab" ? (
+        <ErrorBoundary label="sortlab" onReset={() => setScreen("menu")}>
+          <NumberSortScreen onBack={() => setScreen("menu")} />
+        </ErrorBoundary>
+      ) : screen === "game" ? (
         <ErrorBoundary label="game" onReset={() => navigateTo("menu")}>
           <GameScreen
             initialStage={currentStage}
@@ -573,6 +578,7 @@ function App() {
             onToggleNotifications={handleToggleNotifications}
             onDeleteAllData={handleDeleteAllData}
             onResetTutorial={handleResetTutorial}
+            onOpenSortLab={() => setScreen("sortlab")}
           />
         </ErrorBoundary>
       )}
