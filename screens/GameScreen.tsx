@@ -225,7 +225,7 @@ function findHint(cells: Cell[], destroyedRows: number[] = []): [number, number]
 }
 
 function colorForValue(value: number): MatchColor {
-  return VALUE_COLOR[value] ?? COLOR_GOALS[value % COLOR_GOALS.length].key;
+  return VALUE_COLOR[value];
 }
 
 function buildCells(values: number[], gems?: Record<number, GemType>): Cell[] {
@@ -234,6 +234,18 @@ function buildCells(values: number[], gems?: Record<number, GemType>): Cell[] {
 
 function defaultColorSlots(): ColorSlots {
   return { purple: [], green: [], yellow: [] };
+}
+
+function warnIfColorUnsolvable(stageId: number, cells: Cell[]) {
+  if (!__DEV__) return;
+  const counts: Record<MatchColor, number> = { purple: 0, green: 0, yellow: 0 };
+  for (const c of cells) counts[c.color]++;
+  const need = COLOR_SLOT_CAPACITY * 2;
+  for (const k of ["purple", "green", "yellow"] as MatchColor[]) {
+    if (counts[k] < need) {
+      console.warn(`[color-goals] endless stage ${stageId}: only ${counts[k]} ${k} cells — needs ${need} to complete.`);
+    }
+  }
 }
 
 function colorCellStyle(color: MatchColor) {
@@ -477,7 +489,7 @@ export default function GameScreen({
   // First-entry micro-tutorial overlay for Golden / Freeze.
   const [modeIntro, setModeIntro] = useState(false);
   const [matchLine, setMatchLine] = useState<[number, number] | null>(null);
-  const [matchTint, setMatchTint] = useState(C.coral);
+  const [matchTint, setMatchTint] = useState<string>(C.coral);
   const [thawingCells, setThawingCells] = useState<number[]>([]);
   const [winNewBestReady, setWinNewBestReady] = useState(false);
 
@@ -489,6 +501,14 @@ export default function GameScreen({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const floatIdRef = useRef(0);
   const colorSlotIdRef = useRef(0);
+  // Per-color overflow refs: bins that hit FULL trigger a shake; the toast fires
+  // only on the *first* overflow per color per stage so it doesn't spam.
+  const colorOverflowedRef = useRef<Set<MatchColor>>(new Set());
+  const colorShakeAnims = useRef({
+    purple: new Animated.Value(0),
+    green: new Animated.Value(0),
+    yellow: new Animated.Value(0),
+  }).current;
 
   // Animation values
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -1168,7 +1188,23 @@ export default function GameScreen({
         if (usesColorGoals && pairColor) {
           const slot: ColorSlot = { id: ++colorSlotIdRef.current, values: [a.value, b.value] };
           setColorSlots((prev) => {
-            if (prev[pairColor].length >= COLOR_SLOT_CAPACITY) return prev;
+            if (prev[pairColor].length >= COLOR_SLOT_CAPACITY) {
+              const shake = colorShakeAnims[pairColor];
+              shake.stopAnimation();
+              shake.setValue(0);
+              Animated.sequence([
+                Animated.timing(shake, { toValue: 1, duration: 60, useNativeDriver: true }),
+                Animated.timing(shake, { toValue: -1, duration: 60, useNativeDriver: true }),
+                Animated.timing(shake, { toValue: 0.6, duration: 50, useNativeDriver: true }),
+                Animated.timing(shake, { toValue: 0, duration: 50, useNativeDriver: true }),
+              ]).start();
+              if (!colorOverflowedRef.current.has(pairColor)) {
+                colorOverflowedRef.current.add(pairColor);
+                const label = COLOR_BY_KEY[pairColor].label;
+                showToast(`${label} full — go for another color`, "warn", 1400);
+              }
+              return prev;
+            }
             return { ...prev, [pairColor]: [...prev[pairColor], slot] };
           });
         }
@@ -1382,8 +1418,11 @@ export default function GameScreen({
       }).catch(onStorageError(key));
       onStageAdvance?.(mode, s);
     }
-    setCells(buildCellsForMode(s, mode));
+    const nextCells = buildCellsForMode(s, mode);
+    setCells(nextCells);
     setColorSlots(defaultColorSlots());
+    colorOverflowedRef.current = new Set();
+    if (mode === "endless") warnIfColorUnsolvable(s, nextCells);
     setTargets(mode === "golden" ? (getGoldenStage(s)?.targets ?? {}) : {});
     setCollected({});
     wonRef.current = false;
@@ -1538,12 +1577,17 @@ export default function GameScreen({
         <View style={gs.colorGoalsRow}>
           {COLOR_GOALS.map((goal) => {
             const slots = colorSlots[goal.key];
+            const full = slots.length >= COLOR_SLOT_CAPACITY;
+            const shake = colorShakeAnims[goal.key];
+            const shakeX = shake.interpolate({ inputRange: [-1, 0, 1], outputRange: [-6, 0, 6] });
             return (
-              <View
+              <Animated.View
                 key={goal.key}
                 style={[
                   gs.colorGoalCard,
                   { backgroundColor: goal.bg, borderColor: goal.border, shadowColor: goal.border },
+                  full && gs.colorGoalCardFull,
+                  { transform: [{ translateX: shakeX }] },
                 ]}
               >
                 <View style={gs.colorGoalTitleRow}>
@@ -1587,7 +1631,7 @@ export default function GameScreen({
                     />
                   ))}
                 </View>
-              </View>
+              </Animated.View>
             );
           })}
         </View>
@@ -1798,6 +1842,11 @@ export default function GameScreen({
                             isPopping && gs.cellNumPopping,
                           ]}>
                             {cell.value}
+                          </Text>
+                        )}
+                        {cellGoalColor && !isPopping && (
+                          <Text style={gs.cellColorBadge}>
+                            {cellGoalColor.charAt(0).toUpperCase()}
                           </Text>
                         )}
                       </View>
@@ -2265,6 +2314,7 @@ const gs = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
+  colorGoalCardFull: { opacity: 0.55 },
   colorGoalTitleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2459,6 +2509,15 @@ const gs = StyleSheet.create({
   cellNumFrozen: { color: "#2a6fa8", fontWeight: "900" },
   cellNumSelected: { color: "#3d2000" },
   cellNumPopping: { color: "#fff" },
+  cellColorBadge: {
+    position: "absolute",
+    top: 2,
+    left: 4,
+    fontSize: 8,
+    fontWeight: "900",
+    color: "rgba(255,255,255,0.7)",
+    letterSpacing: 0.4,
+  },
 
   matchLine: {
     position: "absolute",
